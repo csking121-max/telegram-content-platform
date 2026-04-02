@@ -121,7 +121,7 @@ async def admin_login(body: LoginRequest, request: Request, response: Response):
         value=token,
         httponly=True,
         samesite="strict",
-        secure=not settings.DEBUG,
+        secure=settings.COOKIE_SECURE,
         max_age=settings.ADMIN_JWT_EXPIRY_HOURS * 3600,
         path="/",
     )
@@ -132,7 +132,7 @@ async def admin_login(body: LoginRequest, request: Request, response: Response):
         value=csrf_token,
         httponly=False,   # JS must read this
         samesite="strict",
-        secure=not settings.DEBUG,
+        secure=settings.COOKIE_SECURE,
         max_age=settings.ADMIN_JWT_EXPIRY_HOURS * 3600,
         path="/",
     )

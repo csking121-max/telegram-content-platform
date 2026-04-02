@@ -89,6 +89,19 @@ class Settings:
 
     # ── Derived ──────────────────────────────────────
     @property
+    def COOKIE_SECURE(self) -> bool:
+        """True only when serving over HTTPS (any CORS origin starts with https://).
+        When running on plain HTTP (IP-only, no SSL), returns False so cookies work.
+        Can be forced via env var COOKIE_SECURE=true/false."""
+        env_val = os.getenv("COOKIE_SECURE", "")
+        if env_val.lower() in ("true", "1", "yes"):
+            return True
+        if env_val.lower() in ("false", "0", "no"):
+            return False
+        # Auto-detect: secure only if at least one CORS origin is HTTPS
+        return any(o.startswith("https://") for o in self.CORS_ORIGINS)
+
+    @property
     def telegram_bots(self) -> list[dict]:
         """Parse TELEGRAM_BOTS env into list of dicts."""
         bots: list[dict] = []
