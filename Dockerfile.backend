@@ -14,11 +14,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/ .
+# Copy backend as a package so "from backend.X" imports work
+COPY backend/ ./backend/
+
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
 # Production: gunicorn with 2 uvicorn workers.
 # 2 workers = good concurrency on 256MB free VM without OOM.
 # Each worker handles async requests so 2x workers = ~2x throughput.
-CMD ["gunicorn", "main:app", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "--bind", "0.0.0.0:8000", "--timeout", "60", "--graceful-timeout", "30", "--log-level", "info"]
+CMD ["gunicorn", "backend.main:app", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "--bind", "0.0.0.0:8000", "--timeout", "60", "--graceful-timeout", "30", "--log-level", "info"]

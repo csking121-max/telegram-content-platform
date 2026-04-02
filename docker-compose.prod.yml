@@ -17,7 +17,7 @@ services:
   backend:
     volumes: []                      # remove dev bind-mount — use baked image
     command: >
-      gunicorn main:app
+      gunicorn backend.main:app
       -k uvicorn.workers.UvicornWorker
       -w 4
       --bind 0.0.0.0:8000

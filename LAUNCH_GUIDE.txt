@@ -156,7 +156,7 @@ Each phase tells you:
 
   3. Let your user run docker without sudo:
 
-     sudo usermod -aG docker ubuntu
+     curl -fsSL https://get.docker.com | sudo sh
 
   4. Apply the group change (so you don't have to log out and back in):
 
@@ -316,70 +316,37 @@ Each phase tells you:
 
      --- KEEP THESE EXACTLY AS-IS (Docker postgres runs locally) ---
 
-     DATABASE_URL=postgresql+asyncpg://platform:YOUR_DB_PASSWORD@db:5432/content_platform
-     DATABASE_URL_SYNC=postgresql://platform:YOUR_DB_PASSWORD@db:5432/content_platform
-
-     --- SET THESE ---
-
+     DATABASE_URL=postgresql+asyncpg://platform:Nikkhiljp@3110@db:5432/content_platform
+     DATABASE_URL_SYNC=postgresql://platform:Nikkhiljp@3110@db:5432/content_platform
      REDIS_URL=redis://redis:6379/0
-
-     SECRET_KEY=PASTE_YOUR_FIRST_GENERATED_SECRET_HERE
+     SECRET_KEY=iXJYeEsPZhlWrPsSuNoz60jneYa5JO3KiP75vKj2gd2cC2FxJ6tEHkL4ouEOrCE_
      DEBUG=false
      LOG_LEVEL=INFO
-     CORS_ORIGINS=["https://yourdomain.com"]
-
-     TELEGRAM_BOTS=mybotusername:123456789:ABCDEF_BOT_TOKEN:HMAC_SECRET
-       (format: username:token:hmac_secret)
-       (username = your bot's username WITHOUT the @ symbol)
-       (token = the token from @BotFather)
-       (hmac_secret = run python3 -c "import secrets; print(secrets.token_urlsafe(32))" and paste)
-
-     AUTO_DELETE_ENABLED=True
-     DEFAULT_DELETE_SECONDS=3600
-     DELIVERY_BATCH_SIZE=10
-     DELIVERY_BATCH_DELAY_MS=500
-     STORAGE_CHAT_ID=0
-
-     DEFAULT_CREDIT_BALANCE=100
+     CORS_ORIGINS=["https://80.225.247.11"]
+     RATE_LIMIT_REQUESTS=30
+     RATE_LIMIT_WINDOW_SECONDS=60
      CREDIT_FRAUD_WINDOW_SECONDS=60
      CREDIT_FRAUD_MAX_DEDUCTIONS=10
 
-     DEFAULT_MEMBERSHIP_TYPE=free
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=Nikkhiljp@3110
+ADMIN_JWT_SECRET=Iz0IbeMGD4W3Okd150j3yUIYSWn7O4-P_cZi2L4VwmCa-fHHNNRFrBBJp-Xjc3st
+ADMIN_JWT_EXPIRY_HOURS=24
 
-     PAYMENT_PROVIDER=stub
-     PAYMENT_GATEWAY_URL=
-     PAYMENT_SECRET_KEY=
-     PAYMENT_WEBHOOK_SECRET=
+INTERNAL_API_KEY=k9Ns2hjBNVDxxg9K4MMAalSK1iCX5pC6GaWo7yoAjy-wnredyBy52tuP6f2KWDCY
+VITE_API_BASE_URL=/api
+BACKEND_INTERNAL_URL=http://backend:8000
+POSTGRES_DB=content_platform
+POSTGRES_USER=platform
+POSTGRES_PASSWORD=Nikkhiljp@3110
 
-     REFERRAL_REWARD_CREDITS=10
-     REFERRAL_MIN_UNLOCKS=1
-
-     RATE_LIMIT_REQUESTS=30
-     RATE_LIMIT_WINDOW_SECONDS=60
-
-     ADMIN_USERNAME=admin
-     ADMIN_PASSWORD=CHOOSE_A_STRONG_PASSWORD_HERE
-     ADMIN_JWT_SECRET=PASTE_YOUR_SECOND_GENERATED_SECRET_HERE
-     ADMIN_JWT_EXPIRY_HOURS=24
-
-     INTERNAL_API_KEY=PASTE_YOUR_THIRD_GENERATED_SECRET_HERE
-
-     ADMIN_NOTIFY_BOT_TOKEN=
-     ADMIN_NOTIFY_CHAT_ID=
-
-     WORKER_CONCURRENCY=8
-     WORKER_POLL_INTERVAL=0.5
-
-     VITE_API_BASE_URL=/api
-
-     BACKEND_INTERNAL_URL=http://backend:8000
-
-     POSTGRES_DB=content_platform
-     POSTGRES_USER=platform
-     POSTGRES_PASSWORD=YOUR_DB_PASSWORD
-
-     IMPORTANT: The POSTGRES_PASSWORD value must match what you put in
-     DATABASE_URL and DATABASE_URL_SYNC above. Pick a strong password.
+     IMPORTANT NOTES:
+     - The POSTGRES_PASSWORD must match what you put in DATABASE_URL above.
+     - TELEGRAM_BOTS is empty because bots are managed via Admin Panel (Phase 9).
+     - Many app settings (credits, referrals, payments, streaks, UPI, content
+       channel, delete timers, etc.) are configured via the Admin Panel AFTER
+       launch. They are stored in the database and do NOT need .env entries.
+     - Replace <paste-...-here> with the 3 random keys from step 3.
 
   5. Save the file:
      Press Ctrl+O, then Enter to save
@@ -389,18 +356,20 @@ Each phase tells you:
 
      cat .env
 
-     Scan through and make sure no value still says "change-me" or is blank
-     (except ADMIN_NOTIFY_BOT_TOKEN and ADMIN_NOTIFY_CHAT_ID which are optional).
+     Scan through and make sure no value still says "change-me" or is blank.
 
 
 ================================================================================
-  PHASE 7 — POINT YOUR DOMAIN & GET SSL CERTIFICATE
+  PHASE 7 — POINT YOUR DOMAIN & GET SSL CERTIFICATE (OPTIONAL)
 ================================================================================
 
   WHERE: Your domain registrar's website + the VM
 
-  WHY:   Telegram requires HTTPS for webhooks. HTTPS requires a domain name
-         and an SSL certificate. Let's Encrypt gives free SSL certificates.
+  WHY:   This phase is OPTIONAL. The bot works without a domain via long
+         polling. A domain + HTTPS is only needed if you want:
+           - A custom branded URL (https://mybotplatform.com)
+           - HTTPS for the admin panel
+         Skip to Phase 8 if you just want to get started now.
 
   -----------------------------------------------
   STEP 7A — Point domain to VM (at your registrar)
@@ -524,15 +493,19 @@ Each phase tells you:
 
      cp nginx/nginx.dev.conf nginx/nginx.conf
 
-  2. In your .env, set:
+  2. In your .env, update only this one line:
 
      CORS_ORIGINS=["http://YOUR_VM_IP"]
-     VITE_API_BASE_URL=http://YOUR_VM_IP/api
+
+     Replace YOUR_VM_IP with your actual IP (e.g., 80.225.247.11).
+     Leave VITE_API_BASE_URL=/api as-is — it works via relative path through nginx.
 
   3. Continue to Phase 8. You'll access the app at http://YOUR_VM_IP
-     (no HTTPS, so Telegram webhooks won't work, but you can test the admin UI)
+     The bot will work fully via long polling. Only HTTPS webhook mode requires a
+     domain, and this platform uses polling — so a domain is OPTIONAL.
 
-  4. Come back and do Phase 7 properly once you have a domain.
+  4. If you later want HTTPS (e.g. for a custom branded domain), come back and
+     do Phase 7 at any time. It is not required for the bot to work.
 
 
 ================================================================================
@@ -545,6 +518,13 @@ Each phase tells you:
          then starts everything: database, redis, backend, workers, admin, nginx.
 
   STEPS:
+
+  0. Make sure you are in your project folder:
+
+     cd ~/YOUR_REPO_NAME
+
+     (Replace YOUR_REPO_NAME with your actual folder name — check with: ls ~)
+     All commands in this phase must run from inside this folder.
 
   1. Build all Docker images:
 
@@ -572,7 +552,7 @@ Each phase tells you:
   4. Run database migrations (creates all the tables):
 
      docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm backend \
-       python -m alembic upgrade head
+       sh -c "cd /app/backend && python -m alembic upgrade head"
 
      SUCCESS looks like:
        "INFO  [alembic.runtime.migration] Running upgrade ... -> ..."
@@ -623,29 +603,51 @@ Each phase tells you:
 
 
 ================================================================================
-  PHASE 9 — REGISTER TELEGRAM WEBHOOKS
+  PHASE 9 — ADD YOUR FIRST BOT VIA ADMIN PANEL
 ================================================================================
 
-  WHERE: Inside the VM
+  WHERE: Your browser
 
-  WHY:   Telegram needs to know where to send messages when users talk to your bot.
-         You register a webhook URL and Telegram sends all updates there.
-
-  NOTE:  This REQUIRES HTTPS (a domain with SSL). Skip if you don't have one yet.
+  WHY:   Bots are managed dynamically through the admin panel, not through
+         config files. You can add, remove, and rotate bots at any time
+         without restarting anything.
 
   STEPS:
 
-  1. Register the webhooks:
+  1. Open the admin panel:
+     - With domain:    https://yourdomain.com
+     - Without domain: http://YOUR_VM_IP
 
-     docker compose exec backend python scripts/register_webhooks.py \
-       --domain https://yourdomain.com
+  2. Log in with the ADMIN_USERNAME and ADMIN_PASSWORD you set in .env
 
-     SUCCESS: "Webhook set for bot @yourbotname → https://yourdomain.com/webhook/..."
-     FAILURE: "Error setting webhook" → check TELEGRAM_BOTS value in .env
+  3. Go to the "Bots" section in the admin panel
 
-  2. Test the bot:
-     Open Telegram → find your bot → send /start
-     If the bot responds → WEBHOOKS WORK!
+  4. Click "Add Bot" and fill in:
+     - Bot Username:    your bot's username (without @)
+     - Bot Token:       the token you got from @BotFather
+     - Webhook Secret:  click generate or paste a random string
+
+  5. Save. The bot is now in the database with status "active".
+
+  6. The gateway automatically detects the new bot within 60 seconds.
+     It will validate the token with Telegram and start listening.
+
+     Check gateway logs to confirm:
+     docker compose logs -f worker | grep -i "bot"
+
+     You should see: "Bot config changed (+1/-0) — restarting gateway"
+     Then: "Bot @yourbotname validated successfully"
+
+  7. Test: Open Telegram → find your bot → send /start
+     If the bot responds → IT WORKS!
+
+  NOTE: No webhook registration is needed. The gateway uses Telegram long
+  polling — it connects OUT to Telegram, so Telegram never needs to reach
+  your server. The bot works whether you have a domain/HTTPS or not.
+
+  ADDING MORE BOTS LATER:
+    Just repeat steps 3-6. No server restart needed.
+    The gateway auto-picks up new bots every 60 seconds.
 
 
 ================================================================================
@@ -788,7 +790,8 @@ Each phase tells you:
   SOLUTION:
     1. Check webhooks: docker compose logs backend | grep webhook
     2. Re-register: docker compose exec backend python scripts/register_webhooks.py --domain https://yourdomain.com
-    3. Check TELEGRAM_BOTS format in .env (username:token:hmac_secret)
+    3. Check the bot is "active" in Admin Panel → Bots section
+    4. Check gateway logs: docker compose logs worker | grep -i bot
 
   PROBLEM: "permission denied" errors
   SOLUTION: Make sure you ran: sudo usermod -aG docker ubuntu && newgrp docker
