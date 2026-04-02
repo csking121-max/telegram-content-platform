@@ -32,8 +32,13 @@ class RateLimiter:
 
     def check(self, key: str) -> None:
         """Raise HTTPException(429) if rate limit exceeded."""
+        import redis as _redis
         full_key = f"rl:{key}"
-        count = self.redis.incr_with_ttl(full_key, self.window_seconds)
+        try:
+            count = self.redis.incr_with_ttl(full_key, self.window_seconds)
+        except (_redis.exceptions.ConnectionError, _redis.exceptions.TimeoutError):
+            logger.debug("Redis unavailable — skipping rate limit check for key=%s", key)
+            return
         if count > self.max_requests:
             logger.warning("Rate limit exceeded for key=%s (count=%d)", key, count)
             raise HTTPException(
@@ -43,5 +48,9 @@ class RateLimiter:
 
     def remaining(self, key: str) -> int:
         """How many requests left in the current window."""
-        count = self.redis.get_int(f"rl:{key}")
+        import redis as _redis
+        try:
+            count = self.redis.get_int(f"rl:{key}")
+        except (_redis.exceptions.ConnectionError, _redis.exceptions.TimeoutError):
+            return self.max_requests
         return max(0, self.max_requests - count)

@@ -24,6 +24,8 @@ class RedisClient:
             settings.REDIS_URL,
             decode_responses=True,
             max_connections=20,
+            socket_connect_timeout=2,
+            socket_timeout=2,
         )
         self._client = redis.Redis(connection_pool=self._pool)
         try:
