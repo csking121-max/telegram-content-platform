@@ -7,14 +7,6 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 
-class SmsForward(BaseModel):
-    """Payload received from Android SMS forwarder."""
-    sender: str
-    body: str
-    received_at: Optional[datetime] = None
-    api_key: str  # simple auth key to prevent abuse
-
-
 class SmsLogRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

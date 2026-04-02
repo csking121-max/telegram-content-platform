@@ -1,10 +1,9 @@
 """
 SMS Webhook endpoint — receives forwarded SMS from Android SMS forwarder app.
 
-Three methods:
- 1. POST /sms/forward   — direct HTTP webhook with sender + body + api_key
- 2. POST /sms/tg-proxy  — Telegram-compatible sendMessage proxy
- 3. POST /sms/webhook   — universal webhook for SMS Forwarder apps (URL mode)
+Two methods:
+ 1. POST /sms/tg-proxy  — Telegram-compatible sendMessage proxy
+ 2. POST /sms/webhook   — universal webhook for SMS Forwarder apps (URL mode)
 
 All paths: store → extract UTR → auto-match → auto-grant → notify user.
 """
@@ -20,12 +19,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config import settings
 from backend.dependencies import get_db
 from backend.models.bot import Bot
 from backend.models.payment_order import PaymentOrder
 from backend.models.user import User
-from backend.schemas.sms_log import SmsForward, SmsLogRead
+from backend.schemas.sms_log import SmsLogRead
 from backend.services.payment_order_service import PaymentOrderService
 from backend.services.platform_settings_service import PlatformSettingsService
 from backend.services.sms_verification_service import SmsVerificationService
@@ -146,33 +144,7 @@ async def _forward_to_utr_group(db: AsyncSession, text: str, sender: str) -> Non
         logger.debug("Could not forward SMS to UTR group")
 
 
-# ── Endpoint 1: Direct HTTP webhook ─────────────────────────────────
-
-@router.post("/forward", response_model=SmsLogRead)
-async def receive_sms(
-    body: SmsForward,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Receive a forwarded SMS from the Android SMS forwarder app via HTTP.
-    """
-    expected_key = getattr(settings, "SMS_FORWARD_API_KEY", "") or settings.SECRET_KEY
-    if body.api_key != expected_key:
-        raise HTTPException(403, "Invalid API key")
-
-    result = await _process_and_match(db, sender=body.sender, body=body.body)
-    sms = result["sms"]
-
-    if result["matched_telegram_id"]:
-        await _notify_user_via_bot(db, result["matched_telegram_id"])
-    for tg_id in result.get("recheck_telegram_ids", []):
-        if tg_id != result.get("matched_telegram_id"):
-            await _notify_user_via_bot(db, tg_id)
-
-    return sms
-
-
-# ── Endpoint 2: Telegram-compatible sendMessage proxy ────────────────
+# ── Endpoint 1: Telegram-compatible sendMessage proxy ────────────────
 
 class TgProxyPayload(BaseModel):
     """Accepts the same fields as Telegram's sendMessage API."""
@@ -239,7 +211,7 @@ async def telegram_proxy(
     }
 
 
-# ── Endpoint 3: Universal SMS Forwarder Webhook ─────────────────────
+# ── Endpoint 2: Universal SMS Forwarder Webhook ─────────────────────
 
 @router.post("/webhook")
 async def sms_webhook(

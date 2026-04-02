@@ -55,35 +55,14 @@ class Settings:
     TELEGRAM_BOTS_RAW: str = os.getenv("TELEGRAM_BOTS", "")
 
     # ── Delivery ─────────────────────────────────────
-    AUTO_DELETE_ENABLED: bool = os.getenv("AUTO_DELETE_ENABLED", "True").lower() in ("true", "1")
-    DEFAULT_DELETE_SECONDS: int = int(os.getenv("DEFAULT_DELETE_SECONDS", "3600"))
     DELIVERY_BATCH_SIZE: int = int(os.getenv("DELIVERY_BATCH_SIZE", "10"))
     DELIVERY_BATCH_DELAY_MS: int = int(os.getenv("DELIVERY_BATCH_DELAY_MS", "500"))
-    STORAGE_CHAT_ID: int = int(os.getenv("STORAGE_CHAT_ID", "0"))
 
     # ── Credits ──────────────────────────────────────
     DEFAULT_CREDIT_BALANCE: int = int(os.getenv("DEFAULT_CREDIT_BALANCE", "100"))
     CREDIT_FRAUD_WINDOW_SECONDS: int = int(os.getenv("CREDIT_FRAUD_WINDOW_SECONDS", "60"))
     CREDIT_FRAUD_MAX_DEDUCTIONS: int = int(os.getenv("CREDIT_FRAUD_MAX_DEDUCTIONS", "10"))
 
-    # ── Memberships ──────────────────────────────────
-    DEFAULT_MEMBERSHIP_TYPE: str = os.getenv("DEFAULT_MEMBERSHIP_TYPE", "free")
-
-    # ── Payments ─────────────────────────────────────
-    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "stub")
-    PAYMENT_GATEWAY_URL: str = os.getenv("PAYMENT_GATEWAY_URL", "")
-    PAYMENT_SECRET_KEY: str = os.getenv("PAYMENT_SECRET_KEY", "")
-    PAYMENT_WEBHOOK_SECRET: str = os.getenv("PAYMENT_WEBHOOK_SECRET", "")
-
-    # ── UPI Payment ──────────────────────────────────
-    UPI_PAYMENT_EXPIRY_MINUTES: int = int(os.getenv("UPI_PAYMENT_EXPIRY_MINUTES", "30"))
-
-    # ── SMS Forwarding ───────────────────────────────
-    SMS_FORWARD_API_KEY: str = os.getenv("SMS_FORWARD_API_KEY", "change-me-sms-key")
-
-    # ── Referrals ────────────────────────────────────
-    REFERRAL_REWARD_CREDITS: int = int(os.getenv("REFERRAL_REWARD_CREDITS", "10"))
-    REFERRAL_MIN_UNLOCKS: int = int(os.getenv("REFERRAL_MIN_UNLOCKS", "1"))
 
     # ── Rate Limiting ────────────────────────────────
     RATE_LIMIT_REQUESTS: int = int(os.getenv("RATE_LIMIT_REQUESTS", "30"))
@@ -104,7 +83,6 @@ class Settings:
     ADMIN_NOTIFY_CHAT_ID: str = os.getenv("ADMIN_NOTIFY_CHAT_ID", "")
 
     # ── Workers ──────────────────────────────────────
-    WORKER_CONCURRENCY: int = int(os.getenv("WORKER_CONCURRENCY", "4"))
     # Seconds between Redis queue polls for delivery/access/credit/deletion workers.
     # Increase to 5-10 on free Redis tiers with command limits (e.g. Upstash free).
     WORKER_POLL_INTERVAL: float = float(os.getenv("WORKER_POLL_INTERVAL", "1.0"))

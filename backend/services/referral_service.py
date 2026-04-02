@@ -9,9 +9,9 @@ from typing import List, Optional
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config import settings
 from backend.engines.credit_engine import CreditEngine
 from backend.models.referral import Referral
+from backend.services.platform_settings_service import PlatformSettingsService
 from backend.utils.token_generator import generate_invite_code
 
 logger = logging.getLogger(__name__)
@@ -81,9 +81,11 @@ class ReferralService:
             return False
 
         # Grant reward to referrer
+        ps = PlatformSettingsService(self.db)
+        reward = await ps.get_int("referral_reward_credits", 10)
         await self.credit_engine.add(
             referral.referrer_user_id,
-            settings.REFERRAL_REWARD_CREDITS,
+            reward,
             f"referral_reward:{referral.invite_code}",
         )
         await self.db.flush()
