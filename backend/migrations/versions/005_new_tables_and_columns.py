@@ -46,10 +46,10 @@ def upgrade() -> None:
         sa.Column("token", sa.String(128), nullable=False, unique=True, index=True),
         sa.Column("ads_completed", sa.Integer, nullable=False, server_default="0"),
         sa.Column("ads_required", sa.Integer, nullable=False, server_default="4"),
-        sa.Column("activated", sa.Boolean, server_default=sa.text("0")),
+        sa.Column("activated", sa.Boolean, server_default=sa.text("false")),
         sa.Column("activated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("used", sa.Boolean, server_default=sa.text("0")),
+        sa.Column("used", sa.Boolean, server_default=sa.text("false")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
 
@@ -61,7 +61,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text, nullable=True, server_default=""),
         sa.Column("credits", sa.Integer, nullable=False),
         sa.Column("price_inr", sa.Numeric(10, 2), nullable=False),
-        sa.Column("is_active", sa.Boolean, server_default=sa.text("1")),
+        sa.Column("is_active", sa.Boolean, server_default=sa.text("true")),
         sa.Column("sort_order", sa.Integer, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )

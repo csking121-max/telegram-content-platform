@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("days_required", sa.Integer, nullable=False, unique=True, index=True),
         sa.Column("bonus_credits", sa.Integer, nullable=False),
         sa.Column("label", sa.String(128), nullable=False, server_default=""),
-        sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.text("1")),
+        sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.text("true")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
 
