@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.content_pack import ContentPack
@@ -185,7 +185,7 @@ class AccessControlEngine:
             .join(MembershipPlan, MembershipPlan.access_type == Membership.membership_type)
             .where(
                 Membership.user_id == user_id,
-                (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.datetime('now')),
+                (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.now()),
                 MembershipPlan.is_active == True,
             )
         )
@@ -194,14 +194,11 @@ class AccessControlEngine:
         return user_max_tier >= required_tier
 
     async def _has_active_membership(self, user_id: int, mtype: str) -> bool:
-        now = datetime.now(timezone.utc)
-        # Use func.datetime('now') for SQLite-safe comparison
-        from sqlalchemy import func
         result = await self.db.execute(
             select(Membership).where(
                 Membership.user_id == user_id,
                 Membership.membership_type == mtype,
-                (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.datetime('now')),
+                (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.now()),
             )
         )
         return result.scalar_one_or_none() is not None
@@ -215,7 +212,7 @@ class AccessControlEngine:
                 select(AdWatchToken).where(
                     AdWatchToken.user_id == user_id,
                     AdWatchToken.activated == True,
-                    AdWatchToken.expires_at > func.datetime('now'),
+                    AdWatchToken.expires_at > func.now(),
                 ).limit(1)
             )
             return result.scalar_one_or_none() is not None

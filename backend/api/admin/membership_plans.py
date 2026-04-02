@@ -47,7 +47,7 @@ async def list_plans(
     count_q = (
         select(Membership.membership_type, func.count(Membership.id))
         .where(
-            (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.datetime("now"))
+            (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.now())
         )
         .group_by(Membership.membership_type)
     )
@@ -118,7 +118,7 @@ async def list_plan_members(plan_id: int, db: AsyncSession = Depends(get_db)):
         .join(User, Membership.user_id == User.id)
         .where(
             Membership.membership_type == plan.access_type,
-            (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.datetime("now")),
+            (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.now()),
         )
         .order_by(Membership.start_at.desc())
     )
