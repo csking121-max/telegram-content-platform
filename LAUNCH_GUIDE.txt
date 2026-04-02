@@ -1,0 +1,818 @@
+================================================================================
+     TELEGRAM CONTENT PLATFORM — ORACLE CLOUD DEPLOYMENT GUIDE
+     VM: Ubuntu 24.04 | VM.Standard.E3.Flex | 2 OCPU | 8 GB RAM
+================================================================================
+
+This guide takes you from a fresh Oracle VM to a fully running production app.
+Follow every step in order. Do NOT skip steps.
+
+Each phase tells you:
+  - WHERE to run the commands (your Windows PC or the Oracle VM)
+  - WHAT to type
+  - WHAT you should see if it worked
+
+================================================================================
+  BEFORE YOU START — THINGS YOU NEED READY
+================================================================================
+
+  1. Your Oracle VM's Public IP address
+     (Find it in Oracle Console → Compute → Instances → your instance)
+     Example: 80.225.247.11
+
+  2. Your SSH private key file (.key file you downloaded when creating the VM)
+     Example: D:\TG SYSTEM\telegram-content-platform\Oracle Key\ssh-key-2026-04-01.key
+
+  3. A domain name (you can buy one for ~$1/year from Namecheap, Porkbun, etc.)
+     Example: mybot.example.com
+     If you don't have a domain yet, you can still complete Phases 1-6 and
+     test with HTTP on the IP address. SSL (Phase 7) requires a domain.
+
+  4. A Telegram bot token from @BotFather
+     Open Telegram → search @BotFather → /newbot → follow prompts
+     You'll get something like: 1234567890:AABBccDDeeFFggHH
+
+  5. A GitHub account (free) — to push your code and pull it on the server
+
+
+================================================================================
+  PHASE 1 — OPEN FIREWALL PORTS IN ORACLE CLOUD CONSOLE
+================================================================================
+
+  WHY:  Oracle blocks all traffic by default. You must open ports for
+        SSH (22), HTTP (80), and HTTPS (443) or nothing will work.
+
+  WHERE: Your browser — Oracle Cloud Console
+
+  STEPS:
+
+  1. Log into https://cloud.oracle.com
+
+  2. Click the hamburger menu (☰) top-left → Networking → Virtual Cloud Networks
+
+  3. Click on your VCN (it was auto-created with your VM, usually named like
+     "vcn-20260401-1234")
+
+  4. On the left sidebar, click "Security Lists"
+
+  5. Click on "Default Security List for ..."
+
+  6. Click "Add Ingress Rules"
+
+  7. Add these THREE rules one by one:
+
+     Rule 1 (HTTP):
+       Source Type:       CIDR
+       Source CIDR:       0.0.0.0/0
+       IP Protocol:       TCP
+       Destination Port:  80
+       Description:       HTTP
+
+     Rule 2 (HTTPS):
+       Source Type:       CIDR
+       Source CIDR:       0.0.0.0/0
+       IP Protocol:       TCP
+       Destination Port:  443
+       Description:       HTTPS
+
+     Rule 3 (SSH — may already exist):
+       Source Type:       CIDR
+       Source CIDR:       0.0.0.0/0
+       IP Protocol:       TCP
+       Destination Port:  22
+       Description:       SSH
+
+  8. Click "Add Ingress Rules" to save
+
+  HOW TO VERIFY:
+  You should now see 3 rules (port 22, 80, 443) in the ingress rules table.
+
+
+================================================================================
+  PHASE 2 — SSH INTO YOUR VM FROM WINDOWS
+================================================================================
+
+  WHERE: Your Windows PC — PowerShell terminal
+
+  WHY:   You need to connect to the VM to install software and deploy.
+
+  STEPS:
+
+  1. Open PowerShell (not as admin, just regular)
+
+  2. Navigate to where your SSH key is:
+
+     cd "D:\TG SYSTEM\telegram-content-platform\Oracle Key"
+
+  3. Fix the key permissions (SSH requires this — do it only once):
+
+     icacls "ssh-key-2026-04-01.key" /inheritance:r /grant:r "$($env:USERNAME):(R)"
+
+     You should see: "Successfully processed 1 files"
+
+  4. Connect to the VM:
+
+     ssh -i "ssh-key-2026-04-01.key" ubuntu@YOUR_VM_IP
+
+     Replace YOUR_VM_IP with your actual IP (e.g., 80.225.247.11)
+
+  5. If it asks "Are you sure you want to continue connecting?" type:  yes
+
+  6. You should now see a prompt like:
+
+     ubuntu@instancename:~$
+
+     This means you are INSIDE the VM. All commands from Phase 3 onward
+     run inside this VM unless stated otherwise.
+
+  TROUBLESHOOTING:
+  - "Permission denied" → the key file permissions are wrong, redo step 3
+  - "Connection refused" → SSH port 22 not open, redo Phase 1
+  - "Connection timed out" → wrong IP or VM is stopped, check Oracle Console
+
+
+================================================================================
+  PHASE 3 — INSTALL DOCKER & GIT ON THE VM
+================================================================================
+
+  WHERE: Inside the VM (you should see ubuntu@... prompt)
+
+  WHY:   Docker runs all our services (database, backend, admin UI, etc.)
+         Git pulls our code from GitHub.
+
+  STEPS:
+
+  1. Update the system packages:
+
+     sudo apt update && sudo apt upgrade -y
+
+     (This takes 1-2 minutes. If it asks about restarting services,
+      just press Enter to accept defaults.)
+
+  2. Install Docker:
+
+     curl -fsSL https://get.docker.com | sudo sh
+
+     Wait for it to finish. You should see "Docker installed" at the end.
+
+  3. Let your user run docker without sudo:
+
+     sudo usermod -aG docker ubuntu
+
+  4. Apply the group change (so you don't have to log out and back in):
+
+     newgrp docker
+
+  5. Install git:
+
+     sudo apt install -y git
+
+  6. Verify everything installed:
+
+     docker --version
+
+     You should see something like: Docker version 27.x.x
+
+     docker compose version
+
+     You should see something like: Docker Compose version v2.x.x
+
+     git --version
+
+     You should see something like: git version 2.x.x
+
+
+================================================================================
+  PHASE 4 — OPEN UBUNTU'S INTERNAL FIREWALL
+================================================================================
+
+  WHERE: Inside the VM
+
+  WHY:   Oracle's Ubuntu VMs have TWO firewalls:
+         1. The Oracle Cloud security list (you opened in Phase 1)
+         2. Ubuntu's own iptables firewall (you must open this too)
+         If you skip this, ports 80 and 443 will still be blocked!
+
+  STEPS:
+
+  1. Open port 80 (HTTP):
+
+     sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
+
+  2. Open port 443 (HTTPS):
+
+     sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+
+  3. Save the rules so they survive reboots:
+
+     sudo apt install -y iptables-persistent
+
+     (If it asks "Save current IPv4 rules?" → Yes)
+     (If it asks "Save current IPv6 rules?" → Yes)
+
+     sudo netfilter-persistent save
+
+  HOW TO VERIFY:
+
+     sudo iptables -L INPUT -n --line-numbers
+
+     You should see lines containing "dpt:80" and "dpt:443" with ACCEPT.
+
+
+================================================================================
+  PHASE 5 — PUSH YOUR CODE TO GITHUB (from your Windows PC)
+================================================================================
+
+  WHERE: Your Windows PC — PowerShell
+
+  WHY:   We need to get the code onto the VM. GitHub is the bridge.
+
+  STEPS:
+
+  1. Go to https://github.com and create a NEW PRIVATE repository.
+     Name it whatever you want (e.g., "tg-platform")
+     Do NOT initialize with README (leave it empty)
+
+  2. Open PowerShell on your Windows PC:
+
+     cd "D:\TG SYSTEM\telegram-content-platform"
+
+  3. Initialize git (if not already done):
+
+     git init
+
+  4. Make sure .gitignore is correct (it should already exclude .env, venv, etc.):
+
+     cat .gitignore
+
+     You should see entries like: .env, venv/, __pycache__/, data/, nginx/ssl/
+
+  5. Add all files:
+
+     git add .
+
+  6. Commit:
+
+     git commit -m "production ready"
+
+  7. Connect to your GitHub repo:
+
+     git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+
+     Replace YOUR_USERNAME and YOUR_REPO_NAME with your actual values.
+
+  8. Push:
+
+     git branch -M main
+     git push -u origin main
+
+     It will ask for your GitHub username and password.
+     NOTE: GitHub no longer accepts passwords. You need a Personal Access Token:
+       - Go to https://github.com/settings/tokens
+       - Click "Generate new token (classic)"
+       - Check "repo" scope
+       - Copy the token
+       - Use this token as the password when git asks
+
+  HOW TO VERIFY:
+  Go to your GitHub repo in the browser. You should see all your project files.
+
+
+================================================================================
+  PHASE 6 — CLONE THE REPO ON THE VM AND CONFIGURE
+================================================================================
+
+  WHERE: Inside the VM (SSH back in if you disconnected)
+
+  WHY:   Pull the code onto the server, then configure it for production.
+
+  STEPS:
+
+  1. Clone your repo:
+
+     cd ~
+     git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+     cd YOUR_REPO_NAME
+
+     (Replace YOUR_USERNAME and YOUR_REPO_NAME with your actual values)
+
+  2. Copy the example .env file:
+
+     cp .env.example .env
+
+  3. Generate 3 secret keys (run this command 3 times, save each output):
+
+     python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+
+     Run it 3 times. You'll get 3 random strings like:
+       a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0u1V2w3X4
+     Save them — you need one for each: SECRET_KEY, ADMIN_JWT_SECRET, INTERNAL_API_KEY
+
+  4. Edit the .env file:
+
+     nano .env
+
+     In the nano editor, use arrow keys to move around.
+     Replace each value carefully. Here is what EVERY line should look like:
+
+     --- KEEP THESE EXACTLY AS-IS (Docker postgres runs locally) ---
+
+     DATABASE_URL=postgresql+asyncpg://platform:YOUR_DB_PASSWORD@db:5432/content_platform
+     DATABASE_URL_SYNC=postgresql://platform:YOUR_DB_PASSWORD@db:5432/content_platform
+
+     --- SET THESE ---
+
+     REDIS_URL=redis://redis:6379/0
+
+     SECRET_KEY=PASTE_YOUR_FIRST_GENERATED_SECRET_HERE
+     DEBUG=false
+     LOG_LEVEL=INFO
+     CORS_ORIGINS=["https://yourdomain.com"]
+
+     TELEGRAM_BOTS=mybotusername:123456789:ABCDEF_BOT_TOKEN:HMAC_SECRET
+       (format: username:token:hmac_secret)
+       (username = your bot's username WITHOUT the @ symbol)
+       (token = the token from @BotFather)
+       (hmac_secret = run python3 -c "import secrets; print(secrets.token_urlsafe(32))" and paste)
+
+     AUTO_DELETE_ENABLED=True
+     DEFAULT_DELETE_SECONDS=3600
+     DELIVERY_BATCH_SIZE=10
+     DELIVERY_BATCH_DELAY_MS=500
+     STORAGE_CHAT_ID=0
+
+     DEFAULT_CREDIT_BALANCE=100
+     CREDIT_FRAUD_WINDOW_SECONDS=60
+     CREDIT_FRAUD_MAX_DEDUCTIONS=10
+
+     DEFAULT_MEMBERSHIP_TYPE=free
+
+     PAYMENT_PROVIDER=stub
+     PAYMENT_GATEWAY_URL=
+     PAYMENT_SECRET_KEY=
+     PAYMENT_WEBHOOK_SECRET=
+
+     REFERRAL_REWARD_CREDITS=10
+     REFERRAL_MIN_UNLOCKS=1
+
+     RATE_LIMIT_REQUESTS=30
+     RATE_LIMIT_WINDOW_SECONDS=60
+
+     ADMIN_USERNAME=admin
+     ADMIN_PASSWORD=CHOOSE_A_STRONG_PASSWORD_HERE
+     ADMIN_JWT_SECRET=PASTE_YOUR_SECOND_GENERATED_SECRET_HERE
+     ADMIN_JWT_EXPIRY_HOURS=24
+
+     INTERNAL_API_KEY=PASTE_YOUR_THIRD_GENERATED_SECRET_HERE
+
+     ADMIN_NOTIFY_BOT_TOKEN=
+     ADMIN_NOTIFY_CHAT_ID=
+
+     WORKER_CONCURRENCY=8
+     WORKER_POLL_INTERVAL=0.5
+
+     VITE_API_BASE_URL=/api
+
+     BACKEND_INTERNAL_URL=http://backend:8000
+
+     POSTGRES_DB=content_platform
+     POSTGRES_USER=platform
+     POSTGRES_PASSWORD=YOUR_DB_PASSWORD
+
+     IMPORTANT: The POSTGRES_PASSWORD value must match what you put in
+     DATABASE_URL and DATABASE_URL_SYNC above. Pick a strong password.
+
+  5. Save the file:
+     Press Ctrl+O, then Enter to save
+     Press Ctrl+X to exit nano
+
+  6. Verify the .env looks correct:
+
+     cat .env
+
+     Scan through and make sure no value still says "change-me" or is blank
+     (except ADMIN_NOTIFY_BOT_TOKEN and ADMIN_NOTIFY_CHAT_ID which are optional).
+
+
+================================================================================
+  PHASE 7 — POINT YOUR DOMAIN & GET SSL CERTIFICATE
+================================================================================
+
+  WHERE: Your domain registrar's website + the VM
+
+  WHY:   Telegram requires HTTPS for webhooks. HTTPS requires a domain name
+         and an SSL certificate. Let's Encrypt gives free SSL certificates.
+
+  -----------------------------------------------
+  STEP 7A — Point domain to VM (at your registrar)
+  -----------------------------------------------
+
+  1. Log into your domain registrar (Namecheap, Porkbun, GoDaddy, etc.)
+
+  2. Go to DNS settings for your domain
+
+  3. Add an A record:
+       Type:  A
+       Name:  @ (or leave blank — means the root domain)
+       Value: YOUR_VM_PUBLIC_IP (e.g., 80.225.247.11)
+       TTL:   Automatic
+
+  4. If you want www to work too, add another A record:
+       Type:  A
+       Name:  www
+       Value: YOUR_VM_PUBLIC_IP
+       TTL:   Automatic
+
+  5. Wait 5-10 minutes for DNS to propagate
+
+  6. Test it (from the VM):
+
+     ping yourdomain.com
+
+     You should see your VM's IP in the output. Press Ctrl+C to stop.
+
+  -----------------------------------------------
+  STEP 7B — Set domain in nginx config (on the VM)
+  -----------------------------------------------
+
+  1. Replace YOUR_DOMAIN in the nginx config:
+
+     sed -i 's/YOUR_DOMAIN/yourdomain.com/g' nginx/nginx.conf
+
+     (Replace yourdomain.com with your actual domain!)
+
+  2. Verify the replacement worked:
+
+     head -15 nginx/nginx.conf
+
+     You should see your domain instead of "YOUR_DOMAIN".
+
+  -----------------------------------------------
+  STEP 7C — Get SSL certificate from Let's Encrypt (on the VM)
+  -----------------------------------------------
+
+  This is a 4-step process. Don't skip any step.
+
+  1. BACKUP the HTTPS nginx config (we need it later):
+
+     cp nginx/nginx.conf nginx/nginx.conf.bak
+
+  2. TEMPORARILY use the HTTP-only config (SSL cert doesn't exist yet,
+     so the HTTPS config would crash nginx):
+
+     cp nginx/nginx.dev.conf nginx/nginx.conf
+
+  3. Build and start JUST nginx and the services it depends on:
+
+     docker compose -f docker-compose.yml -f docker-compose.prod.yml build admin backend
+     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d db redis
+     sleep 15
+     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d backend admin nginx
+
+     Wait about 30 seconds for everything to start.
+
+     Check they're running:
+
+     docker compose ps
+
+     All should show "Up". If any show "Exit" or "Restarting", check logs:
+
+     docker compose logs nginx
+     docker compose logs backend
+
+  4. Run certbot to get the SSL certificate:
+
+     docker compose --profile certbot run --rm certbot certonly \
+       --webroot --webroot-path=/var/www/certbot \
+       -d yourdomain.com \
+       --email your@email.com \
+       --agree-tos --no-eff-email
+
+     (Replace yourdomain.com with your domain)
+     (Replace your@email.com with your actual email)
+
+     SUCCESS looks like:
+       "Congratulations! Your certificate and chain have been saved at:
+        /etc/letsencrypt/live/yourdomain.com/fullchain.pem"
+
+     FAILURE? Common fixes:
+       - "Connection refused" → Phase 1 or Phase 4 firewall rules missing
+       - "DNS problem" → domain not pointing to your VM IP yet, wait longer
+       - "Could not connect to..." → nginx not running, check docker compose ps
+
+  5. RESTORE the HTTPS nginx config:
+
+     cp nginx/nginx.conf.bak nginx/nginx.conf
+
+  6. Restart nginx to use HTTPS:
+
+     docker compose restart nginx
+
+  7. Test HTTPS works (from the VM):
+
+     curl -I https://yourdomain.com
+
+     You should see "HTTP/2 200" or "HTTP/1.1 502" (502 is OK at this point —
+     it means nginx is working with SSL but backend might not have data yet).
+
+  =============================================================================
+  NO DOMAIN YET? SKIP PHASE 7 AND DO THIS INSTEAD:
+  =============================================================================
+
+  If you don't have a domain yet, you can test with HTTP only:
+
+  1. Use the dev nginx config:
+
+     cp nginx/nginx.dev.conf nginx/nginx.conf
+
+  2. In your .env, set:
+
+     CORS_ORIGINS=["http://YOUR_VM_IP"]
+     VITE_API_BASE_URL=http://YOUR_VM_IP/api
+
+  3. Continue to Phase 8. You'll access the app at http://YOUR_VM_IP
+     (no HTTPS, so Telegram webhooks won't work, but you can test the admin UI)
+
+  4. Come back and do Phase 7 properly once you have a domain.
+
+
+================================================================================
+  PHASE 8 — BUILD AND LAUNCH ALL SERVICES
+================================================================================
+
+  WHERE: Inside the VM, in your project folder (cd ~/YOUR_REPO_NAME)
+
+  WHY:   This builds Docker images for backend, worker, and admin UI,
+         then starts everything: database, redis, backend, workers, admin, nginx.
+
+  STEPS:
+
+  1. Build all Docker images:
+
+     docker compose -f docker-compose.yml -f docker-compose.prod.yml build
+
+     This takes 3-8 minutes the first time (it downloads Python, Node.js,
+     installs all dependencies). Subsequent builds are much faster.
+
+     If you see red text with "ERROR", read it carefully:
+       - "network error" → VM has no internet, check Oracle VCN route rules
+       - "npm ERR" → admin UI build failed, check admin_ui/package.json
+
+  2. Start database and Redis first:
+
+     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d db redis
+
+  3. Wait for them to be healthy (about 15 seconds):
+
+     sleep 15
+     docker compose ps
+
+     Both "db" and "redis" should show "(healthy)" in Status.
+     If "db" shows "starting" or "(health: starting)", wait 10 more seconds.
+
+  4. Run database migrations (creates all the tables):
+
+     docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm backend \
+       python -m alembic upgrade head
+
+     SUCCESS looks like:
+       "INFO  [alembic.runtime.migration] Running upgrade ... -> ..."
+       "INFO  [alembic.runtime.migration] Running upgrade ... -> ..."
+
+     Each line is one migration being applied.
+
+     FAILURE? Common fixes:
+       - "connection refused" → db container not healthy, wait and retry
+       - "role does not exist" → POSTGRES_USER in .env doesn't match DATABASE_URL
+
+  5. Start ALL services:
+
+     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+  6. Check everything is running:
+
+     docker compose ps
+
+     You should see something like:
+
+     NAME      IMAGE              STATUS
+     db        postgres:15        Up (healthy)
+     redis     redis:7            Up (healthy)
+     backend   ...backend         Up
+     worker    ...worker          Up
+     admin     ...admin           Up
+     nginx     nginx:alpine       Up
+
+     ALL should show "Up". If any show "Restarting" or "Exit":
+
+     docker compose logs CONTAINER_NAME
+
+     (Replace CONTAINER_NAME with the one that's failing, e.g., "backend")
+
+  7. Quick smoke test:
+
+     WITH domain (HTTPS):
+       curl https://yourdomain.com/api/health
+
+     WITHOUT domain (HTTP):
+       curl http://localhost/api/health
+
+     You should see:
+       {"status":"ok","service":"telegram-content-platform"}
+
+     If you get this response — YOUR BACKEND IS LIVE!
+
+
+================================================================================
+  PHASE 9 — REGISTER TELEGRAM WEBHOOKS
+================================================================================
+
+  WHERE: Inside the VM
+
+  WHY:   Telegram needs to know where to send messages when users talk to your bot.
+         You register a webhook URL and Telegram sends all updates there.
+
+  NOTE:  This REQUIRES HTTPS (a domain with SSL). Skip if you don't have one yet.
+
+  STEPS:
+
+  1. Register the webhooks:
+
+     docker compose exec backend python scripts/register_webhooks.py \
+       --domain https://yourdomain.com
+
+     SUCCESS: "Webhook set for bot @yourbotname → https://yourdomain.com/webhook/..."
+     FAILURE: "Error setting webhook" → check TELEGRAM_BOTS value in .env
+
+  2. Test the bot:
+     Open Telegram → find your bot → send /start
+     If the bot responds → WEBHOOKS WORK!
+
+
+================================================================================
+  PHASE 10 — VERIFY EVERYTHING WORKS
+================================================================================
+
+  WHERE: Your browser + Telegram
+
+  TEST 1 — Admin Panel:
+    Open https://yourdomain.com in a browser
+    You should see a login page
+    Enter your ADMIN_USERNAME and ADMIN_PASSWORD from .env
+    You should be logged in and see the admin dashboard
+
+  TEST 2 — API Health:
+    Open https://yourdomain.com/api/health
+    You should see: {"status":"ok","service":"telegram-content-platform"}
+
+  TEST 3 — Telegram Bot:
+    Open Telegram → find your bot → send /start
+    Bot should respond (if not, check Phase 9)
+
+  TEST 4 — Check logs:
+    docker compose logs -f --tail=50
+
+    This shows live logs from all containers. Press Ctrl+C to stop.
+    Look for any ERROR or CRITICAL messages.
+
+
+================================================================================
+  PHASE 11 — SET UP SSL AUTO-RENEWAL
+================================================================================
+
+  WHERE: Inside the VM
+
+  WHY:   Let's Encrypt certificates expire every 90 days. This cron job
+         automatically renews them so you never have to think about it.
+
+  STEPS:
+
+  1. Open crontab:
+
+     crontab -e
+
+     If it asks which editor, choose 1 (nano).
+
+  2. Add this line at the bottom:
+
+     0 3 1,15 * * cd /home/ubuntu/YOUR_REPO_NAME && docker compose --profile certbot run --rm certbot renew --quiet && docker compose restart nginx
+
+     (Replace YOUR_REPO_NAME with your actual folder name)
+
+     This runs on the 1st and 15th of every month at 3:00 AM.
+
+  3. Save and exit (Ctrl+O, Enter, Ctrl+X)
+
+  4. Verify it's saved:
+
+     crontab -l
+
+     You should see the line you just added.
+
+
+================================================================================
+  PHASE 12 — USEFUL COMMANDS (bookmark this section)
+================================================================================
+
+  All these commands run on the VM, inside your project folder.
+
+  --- Check status of all containers ---
+  docker compose ps
+
+  --- View live logs (all containers) ---
+  docker compose logs -f --tail=100
+
+  --- View logs for one container ---
+  docker compose logs -f backend
+  docker compose logs -f worker
+  docker compose logs -f nginx
+
+  --- Restart a single container ---
+  docker compose restart backend
+  docker compose restart worker
+
+  --- Restart everything ---
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+  --- Update the app (when you push new code) ---
+  git pull
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml build
+  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+  docker compose exec backend python -m alembic upgrade head
+
+  --- Backup the database ---
+  docker compose exec db pg_dump -U platform content_platform > backup_$(date +%Y%m%d).sql
+
+  --- Restore database from backup ---
+  cat backup_YYYYMMDD.sql | docker compose exec -T db psql -U platform content_platform
+
+  --- SSH into a running container (for debugging) ---
+  docker compose exec backend bash
+  docker compose exec worker bash
+
+  --- Check disk space ---
+  df -h
+
+  --- Check memory usage ---
+  free -h
+
+  --- Check container resource usage ---
+  docker stats
+
+
+================================================================================
+  TROUBLESHOOTING
+================================================================================
+
+  PROBLEM: "Cannot connect to the Docker daemon"
+  SOLUTION: sudo systemctl start docker
+
+  PROBLEM: "port 80 already in use"
+  SOLUTION: sudo lsof -i :80   (find what's using it, then stop it)
+
+  PROBLEM: Backend keeps restarting
+  SOLUTION: docker compose logs backend   (read the error message)
+  Common causes:
+    - Wrong DATABASE_URL → check POSTGRES_USER matches
+    - Missing .env values → cat .env and check nothing says "change-me"
+
+  PROBLEM: "502 Bad Gateway" in browser
+  SOLUTION: Backend isn't ready yet. Wait 30 seconds and refresh.
+  If it persists: docker compose logs backend
+
+  PROBLEM: Admin UI shows blank page
+  SOLUTION: Hard refresh (Ctrl+Shift+R). If still blank:
+    docker compose logs admin
+
+  PROBLEM: Bot doesn't respond in Telegram
+  SOLUTION:
+    1. Check webhooks: docker compose logs backend | grep webhook
+    2. Re-register: docker compose exec backend python scripts/register_webhooks.py --domain https://yourdomain.com
+    3. Check TELEGRAM_BOTS format in .env (username:token:hmac_secret)
+
+  PROBLEM: "permission denied" errors
+  SOLUTION: Make sure you ran: sudo usermod -aG docker ubuntu && newgrp docker
+
+  PROBLEM: disk full
+  SOLUTION: docker system prune -af   (removes unused images/containers)
+
+
+================================================================================
+  RESOURCE USAGE ESTIMATE (2 OCPU, 8 GB RAM)
+================================================================================
+
+  Service          RAM        CPU
+  ─────────────    ─────      ──────
+  PostgreSQL       ~200 MB    low
+  Redis            ~50 MB     low
+  Backend (x4)     ~400 MB    moderate
+  Worker           ~300 MB    moderate
+  Admin UI         ~50 MB     minimal
+  Nginx            ~10 MB     minimal
+  ─────────────    ─────      ──────
+  Total            ~1 GB      plenty
+
+  You're using ~1 GB of 8 GB RAM = 87% free.
+  This can comfortably handle 2,000-5,000+ active users.
+
+================================================================================

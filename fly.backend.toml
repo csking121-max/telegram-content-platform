@@ -1,0 +1,43 @@
+# Fly.io config for the FastAPI backend
+# Deploy: fly deploy --config fly.backend.toml --app YOUR_APP_NAME
+# Docs: https://fly.io/docs/reference/configuration/
+
+app = "tg-platform-backend"   # change to your chosen app name
+primary_region = "sin"         # Singapore — change to closest: iad=US, lhr=London, fra=Frankfurt
+
+[build]
+  dockerfile = "Dockerfile.backend"
+
+[env]
+  PORT = "8000"
+  DEBUG = "false"
+  LOG_LEVEL = "INFO"
+  WORKER_POLL_INTERVAL = "1.0"
+
+# All secrets (DATABASE_URL, REDIS_URL, SECRET_KEY, TELEGRAM_BOTS, etc.)
+# are set via: fly secrets set KEY=VALUE --app YOUR_APP_NAME
+# Never put secrets in this file.
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false   # keep VM alive at all times (no cold start)
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type       = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+  [[http_service.checks]]
+    interval      = "30s"
+    timeout       = "10s"
+    grace_period  = "15s"
+    method        = "GET"
+    path          = "/health"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

@@ -1,0 +1,58 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.eggs
+dist
+build
+*.egg
+.mypy_cache
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.venv
+venv
+env
+
+# Node
+admin_ui/node_modules
+admin_ui/.next
+admin_ui/dist
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Docs (not needed in containers)
+docs/
+*.md
+LICENSE
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Misc
+.DS_Store
+Thumbs.db
+scripts/
+tests/

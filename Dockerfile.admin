@@ -1,0 +1,29 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY admin_ui/package.json admin_ui/package-lock.json* ./
+RUN npm install
+
+COPY admin_ui/ ./
+
+# VITE_API_BASE_URL is baked into the JS bundle at build time.
+# Pass it via docker compose build arg or --build-arg:
+#   VITE_API_BASE_URL=https://yourdomain.com  → routes /api calls to your backend
+#   (leave empty / default /api for local dev with nginx proxy)
+ARG VITE_API_BASE_URL=/api
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
+RUN npm run build
+
+# ── Serve with lightweight static server ──
+FROM node:20-alpine
+
+RUN npm install -g serve@14
+
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+
+EXPOSE 3000
+
+CMD ["serve", "-s", "dist", "-l", "3000"]

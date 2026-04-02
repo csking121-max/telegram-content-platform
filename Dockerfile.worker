@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# System deps for asyncpg / psycopg2
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libpq-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install worker deps first, then backend deps (workers import backend modules)
+COPY workers/requirements.txt ./workers_requirements.txt
+RUN pip install --no-cache-dir -r workers_requirements.txt
+
+COPY backend/requirements.txt ./backend_requirements.txt
+RUN pip install --no-cache-dir -r backend_requirements.txt
+
+# Copy both codebases – workers import from backend
+COPY backend/ ./backend/
+COPY workers/ ./workers/
+
+ENV PYTHONPATH=/app
+
+CMD ["python", "workers/main.py"]

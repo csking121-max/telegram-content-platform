@@ -1,0 +1,24 @@
+# Fly.io config for combined Gateway + Workers process
+# Deploy: fly deploy --config fly.worker.toml --app YOUR_APP_NAME-worker
+# This app has no HTTP listener — it runs background processes only.
+
+app = "tg-platform-worker"    # change to your chosen app name
+primary_region = "sin"        # Must match backend region for low-latency
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  WORKER_TYPE = "all"
+  WORKER_POLL_INTERVAL = "1.0"
+  DEBUG = "false"
+
+# All secrets (DATABASE_URL, REDIS_URL, TELEGRAM_BOTS, BACKEND_INTERNAL_URL, etc.)
+# Set via: fly secrets set KEY=VALUE --app YOUR_APP_NAME-worker
+
+# No [[services]] block — this is a pure background worker (no inbound HTTP).
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

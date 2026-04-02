@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Watch Ad — Free Access</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d0d1a;
+      color: #e8e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    .card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 20px;
+      padding: 36px 28px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+
+    .brand {
+      font-size: 13px;
+      color: #6b6b8a;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+    }
+
+    .step-indicator {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 28px;
+    }
+
+    .step-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #2a2a4a;
+      border: 2px solid #3a3a5a;
+      transition: background 0.3s, border-color 0.3s, transform 0.2s;
+    }
+    .step-dot.done  { background: #4ade80; border-color: #4ade80; }
+    .step-dot.active { background: #6366f1; border-color: #818cf8; transform: scale(1.25); }
+
+    .ad-screen {
+      background: #0f0f20;
+      border-radius: 14px;
+      height: 200px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 28px;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid #2a2a4a;
+    }
+
+    .ad-icon {
+      font-size: 52px;
+      margin-bottom: 10px;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .ad-label {
+      font-size: 13px;
+      color: #6b6b8a;
+    }
+
+    .skip-badge {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      background: rgba(99,102,241,0.18);
+      border: 1px solid #6366f1;
+      border-radius: 20px;
+      padding: 3px 12px;
+      font-size: 12px;
+      color: #818cf8;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: #f0f0ff;
+    }
+
+    .sub {
+      font-size: 14px;
+      color: #8888aa;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    /* Countdown ring */
+    .countdown-wrap {
+      position: relative;
+      width: 96px;
+      height: 96px;
+      margin: 0 auto 20px;
+    }
+
+    .countdown-wrap svg {
+      transform: rotate(-90deg);
+    }
+
+    .countdown-track { fill: none; stroke: #2a2a4a; stroke-width: 6; }
+    .countdown-bar   { fill: none; stroke: #6366f1; stroke-width: 6;
+                        stroke-linecap: round; transition: stroke-dashoffset 0.9s linear; }
+    .countdown-bar.done { stroke: #4ade80; }
+
+    .countdown-num {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 700;
+      color: #f0f0ff;
+    }
+
+    .progress-text {
+      font-size: 13px;
+      color: #6b6b8a;
+      margin-bottom: 20px;
+    }
+
+    .btn {
+      display: inline-block;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 14px 36px;
+      border-radius: 50px;
+      border: none;
+      cursor: pointer;
+      width: 100%;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .btn:not(:disabled):hover { opacity: 0.9; }
+    .btn:not(:disabled):active { transform: scale(0.97); }
+
+    .btn-success {
+      background: linear-gradient(135deg, #4ade80, #22c55e);
+      color: #0d1a0d;
+    }
+
+    .status-msg {
+      margin-top: 16px;
+      font-size: 13px;
+      color: #8888aa;
+      min-height: 20px;
+    }
+    .status-msg.error { color: #f87171; }
+    .status-msg.success { color: #4ade80; }
+
+    .reward-card {
+      background: #0f1f0f;
+      border: 1px solid #4ade80;
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 24px;
+      display: none;
+    }
+    .reward-card.show { display: block; }
+    .reward-icon { font-size: 48px; margin-bottom: 12px; }
+    .reward-title { font-size: 20px; font-weight: 700; color: #4ade80; margin-bottom: 8px; }
+    .reward-sub { font-size: 13px; color: #6b8a6b; }
+
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">Free Access — Ad Watch</div>
+
+  <!-- Step dots -->
+  <div class="step-indicator" id="stepDots"></div>
+
+  <!-- Ad screen (hidden when done) -->
+  <div class="ad-screen" id="adScreen">
+    <div class="ad-icon">📺</div>
+    <div class="ad-label">Sponsored Content</div>
+    <div class="skip-badge" id="skipBadge">Ad <span id="stepLabel">1</span> of <span id="totalLabel">4</span></div>
+  </div>
+
+  <!-- Reward card (shown when all done) -->
+  <div class="reward-card" id="rewardCard">
+    <div class="reward-icon">🎉</div>
+    <div class="reward-title">Access Unlocked!</div>
+    <div class="reward-sub" id="rewardSub">You have earned free access. Redirecting to Telegram…</div>
+  </div>
+
+  <h1 id="headingText">Watch Ads for Free Access</h1>
+  <p class="sub" id="subText">Watch <strong id="adsRemaining">?</strong> short ads to unlock <strong id="freeHours">12</strong> hours of free access.</p>
+
+  <!-- Countdown ring -->
+  <div class="countdown-wrap" id="countdownWrap">
+    <svg width="96" height="96" viewBox="0 0 96 96">
+      <circle class="countdown-track" cx="48" cy="48" r="42"/>
+      <circle class="countdown-bar"   cx="48" cy="48" r="42" id="countdownRing"
+              stroke-dasharray="263.9" stroke-dashoffset="0"/>
+    </svg>
+    <div class="countdown-num" id="countdownNum">–</div>
+  </div>
+
+  <p class="progress-text" id="progressText">Ad <span id="progressStep">1</span> of <span id="progressTotal">?</span></p>
+
+  <button class="btn" id="actionBtn" disabled>Please wait…</button>
+  <p class="status-msg" id="statusMsg"></p>
+</div>
+
+<script>
+(function () {
+  // --- Parse URL params ---
+  const params = new URLSearchParams(location.search);
+  const TOKEN    = params.get("token")  || "";
+  const TOTAL    = parseInt(params.get("total") || "4", 10);
+  const TIMER    = parseInt(params.get("timer") || "15", 10);
+  const BOT      = params.get("bot")   || "";
+  const API_BASE = (params.get("api")  || "").replace(/\/$/, "");
+  let   currentStep = parseInt(params.get("step")  || "1", 10);
+
+  if (!TOKEN || !API_BASE) {
+    document.getElementById("statusMsg").textContent = "Invalid session link.";
+    document.getElementById("statusMsg").className = "status-msg error";
+    document.getElementById("actionBtn").textContent = "Close";
+    document.getElementById("actionBtn").disabled = false;
+    document.getElementById("actionBtn").onclick = () => window.close();
+    return;
+  }
+
+  // --- Static text ---
+  document.getElementById("totalLabel").textContent    = TOTAL;
+  document.getElementById("adsRemaining").textContent  = TOTAL;
+  document.getElementById("freeHours").textContent     = params.get("hours") || "12";
+  document.getElementById("progressTotal").textContent = TOTAL;
+
+  // --- Build step dots ---
+  const dotsEl = document.getElementById("stepDots");
+  for (let i = 1; i <= TOTAL; i++) {
+    const d = document.createElement("div");
+    d.className = "step-dot" + (i < currentStep ? " done" : i === currentStep ? " active" : "");
+    d.id = "dot" + i;
+    dotsEl.appendChild(d);
+  }
+
+  // --- Countdown ring helpers ---
+  const CIRCUMFERENCE = 263.9;
+  const ring    = document.getElementById("countdownRing");
+  const numEl   = document.getElementById("countdownNum");
+  let timerInterval = null;
+
+  function setRing(secondsLeft) {
+    const frac   = secondsLeft / TIMER;
+    ring.style.strokeDashoffset = CIRCUMFERENCE * (1 - frac);
+    numEl.textContent = secondsLeft;
+    if (secondsLeft === 0) ring.classList.add("done");
+    else ring.classList.remove("done");
+  }
+
+  function startCountdown(onDone) {
+    let remaining = TIMER;
+    setRing(remaining);
+    const btn = document.getElementById("actionBtn");
+    btn.disabled = true;
+    btn.textContent = "Please wait…";
+
+    clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      remaining--;
+      setRing(remaining);
+      if (remaining <= 0) {
+        clearInterval(timerInterval);
+        onDone();
+      }
+    }, 1000);
+  }
+
+  // --- Update UI for current step ---
+  function renderStep(step) {
+    document.getElementById("stepLabel").textContent    = step;
+    document.getElementById("progressStep").textContent = step;
+    document.getElementById("adsRemaining").textContent = Math.max(0, TOTAL - step + 1);
+
+    // Update dots
+    for (let i = 1; i <= TOTAL; i++) {
+      const d = document.getElementById("dot" + i);
+      if (!d) continue;
+      d.className = "step-dot" + (i < step ? " done" : i === step ? " active" : "");
+    }
+  }
+
+  // --- POST a completed step ---
+  async function submitStep(step) {
+    const btn = document.getElementById("actionBtn");
+    const msg = document.getElementById("statusMsg");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Recording…';
+    msg.textContent = "";
+    msg.className = "status-msg";
+
+    try {
+      const resp = await fetch(API_BASE + "/ad-watch/step", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: TOKEN, step: step, bot_username: BOT }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || "Server error " + resp.status);
+      }
+
+      const data = await resp.json();
+
+      if (data.all_done) {
+        showCompletion(data.redirect_deep_link);
+      } else {
+        // Advance to next step
+        currentStep = step + 1;
+        renderStep(currentStep);
+        startStepFlow(currentStep);
+      }
+    } catch (e) {
+      msg.textContent = "⚠️ " + e.message + " — tap retry";
+      msg.className = "status-msg error";
+      btn.disabled = false;
+      btn.textContent = "Retry";
+      btn.onclick = () => submitStep(step);
+    }
+  }
+
+  // --- Show final reward / redirect ---
+  function showCompletion(redirectUrl) {
+    clearInterval(timerInterval);
+
+    // Mark all dots done
+    for (let i = 1; i <= TOTAL; i++) {
+      const d = document.getElementById("dot" + i);
+      if (d) d.className = "step-dot done";
+    }
+
+    document.getElementById("adScreen").style.display = "none";
+    document.getElementById("countdownWrap").style.display = "none";
+    document.getElementById("progressText").style.display  = "none";
+    document.getElementById("headingText").textContent = "🎉 You Did It!";
+    document.getElementById("subText").textContent    = "All ads watched. Your free access is now active!";
+
+    const rewardCard = document.getElementById("rewardCard");
+    rewardCard.classList.add("show");
+
+    const btn = document.getElementById("actionBtn");
+    btn.className = "btn btn-success";
+    btn.textContent = "Return to Telegram";
+    btn.disabled = false;
+
+    const goBack = () => {
+      if (redirectUrl) {
+        window.location.href = redirectUrl;
+      } else if (BOT) {
+        window.location.href = "https://t.me/" + BOT;
+      } else {
+        document.getElementById("statusMsg").textContent =
+          "Done! Please return to Telegram manually.";
+        document.getElementById("statusMsg").className = "status-msg success";
+      }
+    };
+
+    btn.onclick = goBack;
+
+    // Auto-redirect after 3s
+    if (redirectUrl || BOT) {
+      document.getElementById("rewardSub").textContent =
+        "Free access activated! Redirecting in 3 seconds…";
+      setTimeout(goBack, 3000);
+    }
+  }
+
+  // --- Begin a step's countdown then allow submission ---
+  function startStepFlow(step) {
+    renderStep(step);
+    startCountdown(() => {
+      const btn = document.getElementById("actionBtn");
+      btn.disabled = false;
+      btn.textContent = "✓ Next →";
+      btn.onclick = () => submitStep(step);
+    });
+  }
+
+  // --- Kick off the flow ---
+  startStepFlow(currentStep);
+})();
+</script>
+</body>
+</html>

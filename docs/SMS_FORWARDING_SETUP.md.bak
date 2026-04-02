@@ -1,0 +1,177 @@
+# 📱 SMS Forwarding & UTR Verification Setup
+
+This guide explains how to set up automatic payment verification using SMS forwarding to a **Telegram group**.
+
+---
+
+## How It Works
+
+1. User pays via UPI → bank sends an SMS confirmation with UTR number
+2. Android SMS forwarding app on **your phone** catches incoming bank SMS
+3. The app forwards the SMS to your **UTR Verification Telegram group**
+4. Your bot (which is in the group) reads the message, extracts the UTR + amount
+5. Backend auto-matches it against pending payment orders
+6. If a match is found, the order is verified and user access is granted automatically
+
+---
+
+## Prerequisites
+
+- An Android phone that receives UPI payment confirmation SMS
+- A Telegram group for UTR verification (bot must be a member)
+- Your bot token and the group chat ID
+- TCAP backend running and accessible
+
+---
+
+## Step 1: Create the UTR Verification Group
+
+1. Create a new Telegram group (e.g. "UTR Verification")
+2. Add your TCAP bot to the group as an **admin** (so it can read messages)
+3. Get the group chat ID (it will look like `-1003722286878`)
+   - You can use `@userinfobot` or `@getidsbot` in the group to find it
+
+---
+
+## Step 2: Configure in Admin Panel
+
+Go to your TCAP Admin Panel → **Settings** and set:
+
+| Setting | Value |
+|---------|-------|
+| `utr_group_chat_id` | `-1003722286878` (your group chat ID) |
+| `content_channel_link` | `https://t.me/your_content_channel` |
+| `platform_name` | Your platform name |
+| `bot_welcome_message` | Custom welcome message |
+| `support_contact` | `@your_support_username` |
+
+Click **Save All Settings**.
+
+---
+
+## Step 3: Set Up SMS Forwarding App (Android)
+
+### Recommended: **SMS Forwarder to Telegram**
+
+There are several apps that can forward SMS directly to a Telegram group:
+
+### Option A: **SMS to Telegram** app
+
+Use any SMS forwarding app that can send messages to a Telegram group via a bot. Popular choices:
+
+1. **SMS Forwarder** (by paixaop) — forward SMS as Telegram messages
+   - Install from Play Store
+   - Configure: Filter by bank SMS senders
+   - Set destination: Telegram bot + group chat ID
+   - The bot will forward SMS text into the UTR Verification group
+
+2. **IFTTT** — If This Then That
+   - Trigger: "New SMS received" (filter by sender)
+   - Action: "Send Telegram message" to your group
+
+3. **Tasker + Telegram Plugin**
+   - More control over filtering and forwarding
+
+### Quick Setup (SMS Forwarder):
+
+1. Install the app
+2. Add a **filter rule** for bank SMS senders:
+   - `PYTUPI`, `GPAYUPI`, `PHONPE`, `PAYTM`, `AXISBK`, `SBIINB`, `HDFCBK`, `ICICIB`, `KOTAKB`
+3. Set the **forwarding destination** to your Telegram group
+4. Use your bot's API to send messages to the group, OR use a dedicated "forwarder bot"
+5. Make sure your TCAP bot is in the same group and can read messages
+
+### How the Bot Token + Group works:
+
+If your SMS forwarder app uses a **Telegram Bot API** to send:
+```
+POST https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage
+{
+  "chat_id": "-1003722286878",
+  "text": "<SMS BODY HERE>"
+}
+```
+
+The TCAP bot (which is also in that group) will receive the message and process it automatically.
+
+---
+
+## Step 4: Test the Setup
+
+1. Send a test bank SMS format message to the group manually:
+   ```
+   Rs.299.00 credited to A/c XX1234 by UPI Ref 412345678901 from JOHN DOE on 15-01-25.
+   ```
+
+2. The bot should auto-extract UTR `412345678901` and amount `299.00`
+3. If there's a pending order with that UTR, it will be auto-verified
+4. The bot will reply: "✅ UTR 412345678901 auto-matched to order! Payment verified."
+
+---
+
+## Step 5: Android Permissions
+
+Make sure the forwarding app has these permissions:
+- **Receive SMS** (READ_SMS, RECEIVE_SMS)
+- **Internet access**
+- **Run in background** (disable battery optimization)
+- **Autostart** (on Xiaomi/MIUI, enable autostart for the app)
+
+### For Xiaomi/MIUI devices:
+1. Settings → Battery → App battery saver → SMS Forwarder → No restrictions
+2. Settings → Apps → Manage apps → SMS Forwarder → Autostart → Enable
+3. Lock the app in recent apps tray
+
+### For Samsung OneUI:
+1. Settings → Apps → SMS Forwarder → Battery → Unrestricted
+
+### For stock Android:
+1. Settings → Apps → SMS Forwarder → Battery → Unrestricted
+
+---
+
+## Common Bank SMS Patterns (India)
+
+The system extracts UTR from these SMS formats:
+
+| Bank | Example SMS | UTR Pattern |
+|------|------------|-------------|
+| HDFC | `Rs.299.00 credited by UPI Ref 412345678901` | 12-digit UPI ref |
+| SBI  | `credited by transfer INR 299 Ref no 412345678901` | Ref no |
+| ICICI | `Cr INR 299.00 in Acct by UPI Ref:412345678901` | UPI Ref: |
+| Axis | `Rs.299 has been credited, UTR: 412345678901` | UTR: |
+| Kotak | `Received Rs.299, IMPS Ref 412345678901234` | IMPS Ref |
+| GPay/PhonePe | `You received ₹299. UPI Ref ID: 412345678901` | Ref ID: |
+
+---
+
+## Alternative: HTTP Webhook (Advanced)
+
+If you prefer sending SMS via HTTP instead of Telegram group, the endpoint is still available:
+
+```
+POST https://your-backend-domain.com/sms/forward
+Content-Type: application/json
+
+{
+  "sender": "HDFCBK",
+  "body": "Rs.299.00 credited ... UPI Ref 412345678901",
+  "received_at": "2025-01-15T10:30:00",
+  "api_key": "your-sms-api-key"
+}
+```
+
+Configure `sms_forward_api_key` in Admin → Settings.
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| SMS not being forwarded to group | Check app permissions, battery optimization, autostart |
+| Bot not reading group messages | Make bot an admin in the group; disable Group Privacy in BotFather |
+| UTR not extracted | Check SMS format; patterns are in `sms_verification_service.py` |
+| Order not auto-matched | User must submit UTR via `/pay` first, OR the order must be pending |
+| Group chat ID wrong | Use `@getidsbot` in the group to verify the chat ID |
+| "Unauthorized group" error | Set correct `utr_group_chat_id` in Admin → Settings |

@@ -1,0 +1,310 @@
+﻿"""
+/start handler â€” entry-point for every user interaction.
+
+Usage:
+  /start              â†’ interactive main menu (browse, buy, profile)
+  /start <token>      â†’ access check via backend
+"""
+
+from __future__ import annotations
+
+import logging
+
+from aiogram import Router
+from aiogram.filters import CommandStart, Command
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
+
+from telegram_gateway.http_client import forward_to_backend, api_get
+
+logger = logging.getLogger(__name__)
+start_router = Router(name="start")
+
+
+def _build_main_menu(content_channel_link: str = "") -> InlineKeyboardMarkup:
+    """Build the interactive main menu keyboard."""
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    # Row 1: Browse content + Buy membership
+    row1 = []
+    if content_channel_link:
+        row1.append(InlineKeyboardButton(text="ðŸ“¢ Browse Content", url=content_channel_link))
+    row1.append(InlineKeyboardButton(text="ðŸ’³ Buy Membership", callback_data="menu:plans"))
+    buttons.append(row1)
+
+    # Row 2: Profile + Credits
+    buttons.append([
+        InlineKeyboardButton(text="ðŸ‘¤ My Profile", callback_data="menu:profile"),
+        InlineKeyboardButton(text="ðŸ’° My Credits", callback_data="menu:credits"),
+    ])
+
+    # Row 3: Payment status + Help
+    buttons.append([
+        InlineKeyboardButton(text="ðŸ“‹ Payment Status", callback_data="menu:mystatus"),
+        InlineKeyboardButton(text="â“ Help", callback_data="menu:help"),
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# â”€â”€ /start â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@start_router.message(CommandStart())
+async def handle_start(message: Message, bot_username: str = "", hmac_secret: str = "") -> None:
+    user = message.from_user
+    if not user:
+        return
+
+    # Extract deep-link token from "/start TOKEN"
+    parts = (message.text or "").split(maxsplit=1)
+    token = parts[1].strip() if len(parts) > 1 else None
+
+    if not token:
+        # â”€â”€ Show interactive main menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Register/update user in backend
+        try:
+            await forward_to_backend(
+                bot_username=bot_username,
+                hmac_secret=hmac_secret,
+                data={
+                    "telegram_id": user.id,
+                    "username": user.username,
+                    "action": "register_user",
+                },
+            )
+        except Exception:
+            pass  # Non-critical â€” user may already exist
+
+        # Get platform settings
+        content_channel = ""
+        welcome_msg = "Choose an option below:"
+        platform_name = "Content Platform"
+        try:
+            settings_data = await api_get("/settings/public")
+            if isinstance(settings_data, list):
+                for s in settings_data:
+                    if s.get("key") == "content_channel_link":
+                        content_channel = s.get("value", "")
+                    elif s.get("key") == "bot_welcome_message":
+                        val = s.get("value", "")
+                        if val:
+                            welcome_msg = val
+                    elif s.get("key") == "platform_name":
+                        val = s.get("value", "")
+                        if val:
+                            platform_name = val
+        except Exception:
+            pass
+
+        display_name = user.first_name or user.username or "there"
+        text = (
+            f"ðŸ‘‹ Hey {display_name}!\n\n"
+            f"Welcome to **{platform_name}**\n\n"
+            f"{welcome_msg}"
+        )
+
+        kb = _build_main_menu(content_channel)
+        await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+        return
+
+    # â”€â”€ Token access flow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    try:
+        result = await forward_to_backend(
+            bot_username=bot_username,
+            hmac_secret=hmac_secret,
+            data={
+                "telegram_id": user.id,
+                "username": user.username,
+                "action": "access_check",
+                "token": token,
+            },
+        )
+        data = result.get("data", {})
+        status = data.get("status", "DENIED")
+
+        if status == "ALLOWED":
+            await forward_to_backend(
+                bot_username=bot_username,
+                hmac_secret=hmac_secret,
+                data={
+                    "telegram_id": user.id,
+                    "username": user.username,
+                    "action": "request_delivery",
+                    "token": token,
+                    "pack_id": data.get("pack_id"),
+                },
+            )
+            await message.answer("âœ… Access granted! Your content is being deliveredâ€¦")
+        elif status == "UPGRADE_REQUIRED":
+            opts = data.get("upgrade_options", [])
+            lines = ["âš ï¸ You need an upgrade to access this content:"]
+            for opt in opts:
+                lines.append(f"  â€¢ {opt}")
+            lines.append("\nUse /plans to view available memberships.")
+            await message.answer("\n".join(lines))
+        else:
+            await message.answer(f"âŒ Access denied: {data.get('message', 'unknown reason')}")
+
+    except Exception:
+        logger.exception("Error processing /start for user %s", user.id)
+        await message.answer("âš ï¸ Something went wrong. Please try again later.")
+
+
+# â”€â”€ /menu â€” re-show the main menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@start_router.message(Command("menu"))
+async def handle_menu(message: Message) -> None:
+    user = message.from_user
+    if not user:
+        return
+
+    content_channel = ""
+    try:
+        settings_data = await api_get("/settings/public")
+        if isinstance(settings_data, list):
+            for s in settings_data:
+                if s.get("key") == "content_channel_link":
+                    content_channel = s.get("value", "")
+    except Exception:
+        pass
+
+    kb = _build_main_menu(content_channel)
+    await message.answer("ðŸ“‹ **Main Menu** â€” choose an option:", reply_markup=kb, parse_mode="Markdown")
+
+
+# â”€â”€ /profile â€” show user profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@start_router.message(Command("profile"))
+async def handle_profile(message: Message) -> None:
+    user = message.from_user
+    if not user:
+        return
+    await _send_profile(message, user.id)
+
+
+# â”€â”€ Callback handlers for menu buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@start_router.callback_query(lambda c: c.data and c.data.startswith("menu:"))
+async def handle_menu_callback(callback: CallbackQuery) -> None:
+    user = callback.from_user
+    if not user or not callback.data:
+        return
+
+    action = callback.data.split(":")[1]
+    await callback.answer()
+
+    if action == "profile":
+        await _send_profile(callback.message, user.id)  # type: ignore
+
+    elif action == "credits":
+        await _send_credits(callback.message, user.id)  # type: ignore
+
+    elif action == "plans":
+        await _send_plans(callback.message)  # type: ignore
+
+    elif action == "mystatus":
+        await callback.message.answer(  # type: ignore
+            "Use /mystatus to check your payment status.\n"
+            "Use /pay <UTR> to submit your payment reference."
+        )
+
+    elif action == "help":
+        support = ""
+        try:
+            settings_data = await api_get("/settings/public")
+            if isinstance(settings_data, list):
+                for s in settings_data:
+                    if s.get("key") == "support_contact":
+                        support = s.get("value", "")
+        except Exception:
+            pass
+        text = (
+            "â“ **Help**\n\n"
+            "**Commands:**\n"
+            "/start â€” Main menu\n"
+            "/plans â€” View membership plans\n"
+            "/buy â€” Purchase membership\n"
+            "/pay <UTR> â€” Submit payment reference\n"
+            "/mystatus â€” Check payment status\n"
+            "/profile â€” View your profile\n"
+            "/menu â€” Show main menu\n"
+        )
+        if support:
+            text += f"\nðŸ“ž Support: {support}"
+        await callback.message.answer(text, parse_mode="Markdown")  # type: ignore
+
+
+# â”€â”€ Helper functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+async def _send_profile(message: Message, telegram_id: int) -> None:
+    """Show user profile with membership and credit info."""
+    profile = await api_get(f"/access/profile/{telegram_id}")
+    if not profile:
+        await message.answer(
+            "ðŸ‘¤ **Your Profile**\n\n"
+            f"Telegram ID: `{telegram_id}`\n"
+            "Could not load full profile data.",
+            parse_mode="Markdown",
+        )
+        return
+
+    membership_type = profile.get("membership_type", "free")
+    membership_expiry = profile.get("membership_expiry", "N/A")
+    credits = profile.get("credits", 0)
+    level = profile.get("level", 0)
+
+    text = (
+        "ðŸ‘¤ **Your Profile**\n\n"
+        f"ðŸ†” Telegram ID: `{telegram_id}`\n"
+        f"ðŸ… Membership: **{membership_type.upper()}**\n"
+        f"ðŸ“… Expires: {membership_expiry}\n"
+        f"ðŸ’° Credits: **{credits}**\n"
+        f"â­ Level: {level}\n"
+    )
+    await message.answer(text, parse_mode="Markdown")
+
+
+async def _send_credits(message: Message, telegram_id: int) -> None:
+    """Show user credit balance."""
+    profile = await api_get(f"/access/profile/{telegram_id}")
+    credits = profile.get("credits", 0) if profile else "?"
+    await message.answer(
+        f"ðŸ’° **Your Credits**: **{credits}**\n\n"
+        "Credits are earned through referrals and purchases.\n"
+        "Use /plans to buy more credits with membership plans.",
+        parse_mode="Markdown",
+    )
+
+
+async def _send_plans(message: Message) -> None:
+    """Show available plans inline."""
+    plans = await api_get("/payments/plans")
+    if not plans:
+        await message.answer("ðŸ˜• No plans available right now.")
+        return
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    text = "ðŸ’³ **Available Plans**\n\n"
+
+    for p in plans:
+        duration = f"{p['duration_days']}d" if p.get("duration_days") else "âˆž"
+        text += (
+            f"â€¢ **{p.get('display_name') or p['name']}**\n"
+            f"  â‚¹{p['price_inr']} Â· {duration} Â· {p['access_type'].upper()}\n"
+        )
+        if p.get("description"):
+            text += f"  _{p['description']}_\n"
+        text += "\n"
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"Buy {p.get('display_name') or p['name']} â€” â‚¹{p['price_inr']}",
+                callback_data=f"plan:{p['id']}",
+            )
+        ])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await message.answer(text, reply_markup=kb, parse_mode="Markdown")
