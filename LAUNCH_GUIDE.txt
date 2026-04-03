@@ -60,31 +60,38 @@ Each phase tells you:
 
   7. Add these THREE rules one by one:
 
+     IMPORTANT: Port numbers go in "Destination Port Range" — NOT "Source Port Range".
+     Leave "Source Port Range" BLANK for all rules.
+
      Rule 1 (HTTP):
-       Source Type:       CIDR
-       Source CIDR:       0.0.0.0/0
-       IP Protocol:       TCP
-       Destination Port:  80
-       Description:       HTTP
+       Source Type:             CIDR
+       Source CIDR:             0.0.0.0/0
+       IP Protocol:             TCP
+       Source Port Range:       (leave blank)
+       Destination Port Range:  80
+       Description:             HTTP
 
      Rule 2 (HTTPS):
-       Source Type:       CIDR
-       Source CIDR:       0.0.0.0/0
-       IP Protocol:       TCP
-       Destination Port:  443
-       Description:       HTTPS
+       Source Type:             CIDR
+       Source CIDR:             0.0.0.0/0
+       IP Protocol:             TCP
+       Source Port Range:       (leave blank)
+       Destination Port Range:  443
+       Description:             HTTPS
 
      Rule 3 (SSH — may already exist):
-       Source Type:       CIDR
-       Source CIDR:       0.0.0.0/0
-       IP Protocol:       TCP
-       Destination Port:  22
-       Description:       SSH
+       Source Type:             CIDR
+       Source CIDR:             0.0.0.0/0
+       IP Protocol:             TCP
+       Source Port Range:       (leave blank)
+       Destination Port Range:  22
+       Description:             SSH
 
   8. Click "Add Ingress Rules" to save
 
   HOW TO VERIFY:
   You should now see 3 rules (port 22, 80, 443) in the ingress rules table.
+  Each rule should show the port under "Destination Port Range" with "Source Port Range" blank.
 
 
 ================================================================================
@@ -316,20 +323,20 @@ Each phase tells you:
 
      --- KEEP THESE EXACTLY AS-IS (Docker postgres runs locally) ---
 
-     DATABASE_URL=postgresql+asyncpg://platform:Nikkhiljp@3110@db:5432/content_platform
-     DATABASE_URL_SYNC=postgresql://platform:Nikkhiljp@3110@db:5432/content_platform
+     DATABASE_URL=postgresql+asyncpg://platform:Nikkhiljp3110@db:5432/content_platform
+     DATABASE_URL_SYNC=postgresql://platform:Nikkhiljp3110@db:5432/content_platform
      REDIS_URL=redis://redis:6379/0
      SECRET_KEY=iXJYeEsPZhlWrPsSuNoz60jneYa5JO3KiP75vKj2gd2cC2FxJ6tEHkL4ouEOrCE_
      DEBUG=false
      LOG_LEVEL=INFO
-     CORS_ORIGINS=["https://80.225.247.11"]
+     CORS_ORIGINS=["http://80.225.247.11"]
      RATE_LIMIT_REQUESTS=30
      RATE_LIMIT_WINDOW_SECONDS=60
      CREDIT_FRAUD_WINDOW_SECONDS=60
      CREDIT_FRAUD_MAX_DEDUCTIONS=10
 
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=Nikkhiljp@3110
+ADMIN_PASSWORD=Nikkhiljp3110
 ADMIN_JWT_SECRET=Iz0IbeMGD4W3Okd150j3yUIYSWn7O4-P_cZi2L4VwmCa-fHHNNRFrBBJp-Xjc3st
 ADMIN_JWT_EXPIRY_HOURS=24
 
@@ -338,7 +345,7 @@ VITE_API_BASE_URL=/api
 BACKEND_INTERNAL_URL=http://backend:8000
 POSTGRES_DB=content_platform
 POSTGRES_USER=platform
-POSTGRES_PASSWORD=Nikkhiljp@3110
+POSTGRES_PASSWORD=Nikkhiljp3110
 
      IMPORTANT NOTES:
      - The POSTGRES_PASSWORD must match what you put in DATABASE_URL above.

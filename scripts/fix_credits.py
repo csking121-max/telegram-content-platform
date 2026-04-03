@@ -4,10 +4,10 @@ import sqlite3
 conn = sqlite3.connect("data/platform.db")
 c = conn.cursor()
 
-# Find verified credit package orders (plan_id=0)
+# Find verified credit package orders (plan_id IS NULL or plan_id=0)
 c.execute(
     "SELECT id, order_ref, user_id, amount, package_id FROM payment_orders "
-    "WHERE plan_id=0 AND status='verified'"
+    "WHERE (plan_id IS NULL OR plan_id=0) AND status='verified'"
 )
 orders = c.fetchall()
 print(f"Found {len(orders)} verified credit package orders")

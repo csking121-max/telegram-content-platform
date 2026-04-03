@@ -20,8 +20,8 @@ class PaymentOrder(Base):
     user_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True,
     )
-    plan_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("membership_plans.id"), nullable=False, index=True,
+    plan_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("membership_plans.id"), nullable=True, index=True,
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     upi_id_used: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -41,7 +41,7 @@ class PaymentOrder(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])  # noqa: F821
-    plan: Mapped["MembershipPlan"] = relationship("MembershipPlan", foreign_keys=[plan_id])  # noqa: F821
+    plan: Mapped[Optional["MembershipPlan"]] = relationship("MembershipPlan", foreign_keys=[plan_id])  # noqa: F821
     package: Mapped[Optional["CreditPackage"]] = relationship("CreditPackage", foreign_keys=[package_id])  # noqa: F821
 
     __table_args__ = (

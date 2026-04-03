@@ -203,8 +203,8 @@ class PaymentOrderService:
             logger.debug("Order %s already verified — skipping grant", order_ref)
             return
 
-        # ── Credit package order (plan_id == 0) ─────────────
-        if order.plan_id == 0:
+        # ── Credit package order (plan_id is NULL) ─────────────
+        if order.plan_id is None:
             # Custom-amount credit order (no fixed package)
             custom_credits = getattr(order, "custom_credits", None)
             if custom_credits:

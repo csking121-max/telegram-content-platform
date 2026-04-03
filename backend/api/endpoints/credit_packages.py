@@ -79,7 +79,7 @@ async def buy_credit_package(body: CreditPurchaseRequest, db: AsyncSession = Dep
 
     order = PaymentOrder(
         user_id=user.id,
-        plan_id=0,  # 0 means credit package, not membership plan
+        plan_id=None,  # NULL means credit package, not membership plan
         package_id=pkg.id,  # link to the credit package purchased
         amount=amount,
         upi_id_used=upi.upi_id,
@@ -144,7 +144,7 @@ async def buy_custom_credits(body: CustomCreditPurchaseRequest, db: AsyncSession
     from backend.models.payment_order import PaymentOrder as _PO
     order = _PO(
         user_id=user.id,
-        plan_id=0,
+        plan_id=None,
         package_id=None,
         custom_credits=body.credits_amount,
         amount=amount,
