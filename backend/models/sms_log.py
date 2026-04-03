@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -26,7 +26,7 @@ class SmsLog(Base):
     matched_order_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("payment_orders.id", ondelete="SET NULL"), nullable=True,
     )
-    source_chat_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     def __repr__(self) -> str:
