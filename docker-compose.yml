@@ -81,6 +81,32 @@ services:
     networks:
       - app-network
 
+  # ── Telegram Gateway (bot long-polling) ─────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      DATABASE_URL_SYNC: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      BACKEND_INTERNAL_URL: http://backend:8000
+    volumes:
+      - ./telegram_gateway:/app/telegram_gateway
+      - ./backend:/app/backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - app-network
+
   # ── Admin Panel (React) ────────────────────────────────
   admin:
     build:
