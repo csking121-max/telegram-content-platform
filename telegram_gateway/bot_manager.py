@@ -115,9 +115,13 @@ logger = logging.getLogger(__name__)
 async def _fetch_bots_from_backend() -> list[dict[str, str]]:
     """Fetch active bots from the backend internal API."""
     url = f"{BACKEND_URL}/internal/bots/active"
+    headers: dict[str, str] = {}
+    api_key = os.getenv("INTERNAL_API_KEY", "")
+    if api_key:
+        headers["X-Internal-Key"] = api_key
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             bots = resp.json()
             logger.info("Fetched %d active bot(s) from backend", len(bots))
