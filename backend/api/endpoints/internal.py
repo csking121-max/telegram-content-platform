@@ -464,13 +464,22 @@ async def send_welcome(
 
     sent = 0
     failed = 0
+    def _md_escape(t: str) -> str:
+        """Escape Markdown v1 special chars in dynamic strings."""
+        for ch in ("_", "*", "`", "["):
+            t = t.replace(ch, f"\\{ch}")
+        return t
+
+    safe_platform = _md_escape(platform_name)
+
     for tg_id in telegram_ids:
         # Resolve placeholders (user-specific names not available in bulk send)
         resolved_msg = welcome_msg.replace("{platform_name}", platform_name)
         resolved_msg = resolved_msg.replace("{user_name}", "there")
         resolved_msg = resolved_msg.replace("{username}", "there")
         resolved_msg = resolved_msg.replace("{user_id}", str(tg_id))
-        text = f"Hey!\n\nWelcome to *{platform_name}*\n\n{resolved_msg}"
+        safe_msg = _md_escape(resolved_msg)
+        text = f"Hey!\n\nWelcome to *{safe_platform}*\n\n{safe_msg}"
         r = await _tg_request(bot.bot_token, "sendMessage", {
             "chat_id": tg_id,
             "text": text,
