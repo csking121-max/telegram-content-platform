@@ -4,7 +4,8 @@ Credit Engine — ALL credit mutations go through here.
 Every change is wrapped in an atomic transaction and recorded in credit_history.
 """
 from __future__ import annotations
-import asyncioimport logging
+import asyncio
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update
