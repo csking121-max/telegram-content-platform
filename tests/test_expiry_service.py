@@ -65,7 +65,7 @@ async def expiry_svc(db: AsyncSession) -> ExpiryService:
 
 @pytest.mark.asyncio
 async def test_expire_memberships_deletes_expired(db, expiry_svc, user):
-    """Expired memberships are deleted."""
+    """Expired memberships are soft-expired (kept with expiry_at set to now)."""
     m = Membership(
         user_id=user.id, membership_type="vip",
         start_at=_NOW - timedelta(days=31),
@@ -78,7 +78,11 @@ async def test_expire_memberships_deletes_expired(db, expiry_svc, user):
     assert count == 1
 
     result = await db.execute(select(Membership).where(Membership.user_id == user.id))
-    assert result.scalar_one_or_none() is None
+    row = result.scalar_one_or_none()
+    assert row is not None  # soft-expire keeps the row
+    # expiry_at was updated to approximately now
+    now = datetime.now(timezone.utc)
+    assert abs((row.expiry_at - now).total_seconds()) < 5
 
 
 @pytest.mark.asyncio
