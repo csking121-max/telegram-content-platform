@@ -189,7 +189,9 @@ class AccessControlEngine:
                 MembershipPlan.is_active == True,
             )
         )
-        user_max_tier = result.scalar_one_or_none() or 0
+        user_max_tier = result.scalar_one_or_none()
+        if user_max_tier is None:
+            return False  # user has no active memberships at all
 
         return user_max_tier >= required_tier
 
