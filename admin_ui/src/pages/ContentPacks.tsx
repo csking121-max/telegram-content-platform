@@ -70,12 +70,12 @@ export default function ContentPacks() {
               <td>{p.title}</td>
               <td>{p.access_type}</td>
               <td>
-                {p.access_type === "credits"
+                {(p.access_type === "credits" || p.access_type === "credits_only")
                   ? (p.credit_mode === "per_pack" ? "Per Pack" : "Per Item")
                   : "—"}
               </td>
               <td>
-                {p.access_type === "credits"
+                {(p.access_type === "credits" || p.access_type === "credits_only")
                   ? p.credit_mode === "per_pack"
                     ? `${p.credit_cost} (flat)`
                     : `${p.credit_per_item || 1}/item`
@@ -107,14 +107,15 @@ export default function ContentPacks() {
               style={{ marginLeft: 8, padding: 4 }}
             >
               <option value="free">Free</option>
-              <option value="credits">Credits</option>
+              <option value="credits">Credits (free for members)</option>
+              <option value="credits_only">Credits Only (always costs credits)</option>
               <option value="vip">VIP</option>
               <option value="premium">Premium</option>
               <option value="daily_pass">Daily Pass</option>
             </select>
           </label>
 
-          {form.access_type === "credits" && (
+          {(form.access_type === "credits" || form.access_type === "credits_only") && (
             <>
               <label style={{ display: "block", marginBottom: 8 }}>
                 Credit Mode:

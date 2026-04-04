@@ -116,38 +116,16 @@ class AccessControlEngine:
         if await self._has_ad_watch_access(user.id):
             return AccessResponse(allowed=True, pack_id=pack.id)
 
+        # "credits_only" — always requires credit payment, no membership bypass
+        if access == "credits_only":
+            return await self._charge_credits(user, pack)
+
         if access == "credits":
-            # Calculate actual cost based on credit_mode
-            cost = await self._calc_credit_cost(pack)
-            balance = await self._get_balance(user.id)
-            if balance >= cost:
-                # Deduct credits immediately
-                credit_engine = CreditEngine(self.db)
-                try:
-                    await credit_engine.deduct(
-                        user_id=user.id,
-                        amount=cost,
-                        reason=f"Content access: {pack.title} (pack #{pack.id})",
-                    )
-                except ValueError:
-                    return AccessResponse(
-                        allowed=False,
-                        reason=f"Credit deduction failed.",
-                        credit_cost=cost,
-                        upgrade_options=["buy_credits"],
-                    )
-                return AccessResponse(
-                    allowed=True,
-                    pack_id=pack.id,
-                    credits_deducted=cost,
-                    credit_cost=cost,
-                )
-            return AccessResponse(
-                allowed=False,
-                reason=f"Insufficient credits (need {cost}, have {balance}).",
-                credit_cost=cost,
-                upgrade_options=["buy_credits"],
-            )
+            # Members with ANY active membership get credits content for free
+            if await self._has_any_active_membership(user.id):
+                return AccessResponse(allowed=True, pack_id=pack.id)
+            # Non-members must pay credits
+            return await self._charge_credits(user, pack)
 
         # Any other access type (vip, premium, daily_pass, or custom) = tier-based membership check
         ok = await self._has_sufficient_membership(user.id, access)
@@ -158,6 +136,48 @@ class AccessControlEngine:
             reason=f"Requires {access} membership.",
             upgrade_options=[access],
         )
+
+    async def _charge_credits(self, user: User, pack: ContentPack) -> AccessResponse:
+        """Deduct credits for a pack. Returns AccessResponse."""
+        cost = await self._calc_credit_cost(pack)
+        balance = await self._get_balance(user.id)
+        if balance >= cost:
+            credit_engine = CreditEngine(self.db)
+            try:
+                await credit_engine.deduct(
+                    user_id=user.id,
+                    amount=cost,
+                    reason=f"Content access: {pack.title} (pack #{pack.id})",
+                )
+            except ValueError:
+                return AccessResponse(
+                    allowed=False,
+                    reason="Credit deduction failed.",
+                    credit_cost=cost,
+                    upgrade_options=["buy_credits"],
+                )
+            return AccessResponse(
+                allowed=True,
+                pack_id=pack.id,
+                credits_deducted=cost,
+                credit_cost=cost,
+            )
+        return AccessResponse(
+            allowed=False,
+            reason=f"Insufficient credits (need {cost}, have {balance}).",
+            credit_cost=cost,
+            upgrade_options=["buy_credits"],
+        )
+
+    async def _has_any_active_membership(self, user_id: int) -> bool:
+        """Return True if the user has at least one non-expired membership."""
+        result = await self.db.execute(
+            select(Membership.id).where(
+                Membership.user_id == user_id,
+                (Membership.expiry_at.is_(None)) | (Membership.expiry_at > func.now()),
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def _has_sufficient_membership(self, user_id: int, required_access_type: str) -> bool:
         """Check if user has any active membership whose tier_level >= the required tier.

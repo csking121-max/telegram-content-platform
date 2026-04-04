@@ -40,7 +40,7 @@ class ContentPack(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "access_type IN ('free', 'credits', 'daily_pass', 'vip', 'premium')",
+            "access_type IN ('free', 'credits', 'credits_only', 'daily_pass', 'vip', 'premium')",
             name="ck_content_pack_access_type",
         ),
     )
