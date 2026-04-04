@@ -27,13 +27,19 @@ class TokenService:
         self,
         pack_id: int,
         *,
-        expires_in_hours: int = 24,
+        expires_in_hours: Optional[int] = None,
         single_use: bool = False,
         bound_user_id: Optional[int] = None,
     ) -> Token:
-        """Generate a secure token linked to a content pack."""
+        """Generate a secure token linked to a content pack.
+        expires_in_hours=None means no expiry (unlimited).
+        """
         token_str = secrets.token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+            if expires_in_hours is not None
+            else None
+        )
 
         token = Token(
             token=token_str,

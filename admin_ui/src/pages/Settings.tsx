@@ -3,7 +3,7 @@ import { useFetch } from "../hooks/useFetch";
 import type { PlatformSetting } from "../types";
 import { getPlatformSettings, bulkUpdateSettings } from "../api/endpoints";
 
-const CATEGORIES = ["general", "telegram", "payment", "content", "credits"];
+const CATEGORIES = ["general", "telegram", "payment", "content", "credits", "notifications"];
 
 const CATEGORY_LABELS: Record<string, string> = {
   general: "🔧 General",
@@ -11,6 +11,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   payment: "💳 Payment",
   content: "📦 Content",
   credits: "🪙 Credits Pricing",
+  notifications: "🔔 Notifications",
 };
 
 // Human-readable labels for specific setting keys
@@ -24,6 +25,10 @@ const FRIENDLY_NAMES: Record<string, string> = {
   credits_per_inr: "💰 Price per Credit in ₹ (supports decimals)",
   custom_credits_min: "📉 Min Credits per Custom Order",
   custom_credits_max: "📈 Max Credits per Custom Order (0 = no limit)",
+  expiry_notify_enabled: "📬 Membership Expiry Reminders (enabled)",
+  expiry_notify_days_before: "📅 Days Before Expiry to Notify",
+  low_credit_warning_enabled: "⚠️ Low Credit Warnings (enabled)",
+  low_credit_thresholds: "📊 Low Credit Warning Thresholds (comma-separated)",
 };
 
 export default function Settings() {

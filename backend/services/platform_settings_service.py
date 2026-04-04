@@ -85,6 +85,10 @@ DEFAULTS: list[dict] = [
     {"key": "expiry_notify_enabled", "value": "true", "description": "Enable automatic membership expiry reminder notifications", "category": "notifications"},
     {"key": "expiry_notify_days_before", "value": "3", "description": "Send expiry reminder this many days before membership expires", "category": "notifications"},
 
+    # Low Credit Warnings
+    {"key": "low_credit_warning_enabled", "value": "true", "description": "Enable automatic low-credit warning messages to users", "category": "notifications"},
+    {"key": "low_credit_thresholds", "value": "10,5,2", "description": "Comma-separated credit thresholds that trigger a warning (e.g. 10,5,2). User is notified once per threshold.", "category": "notifications"},
+
     # General
     {"key": "platform_name", "value": "Content Platform", "description": "Platform name shown in bot messages", "category": "general"},
     {"key": "support_contact", "value": "", "description": "Support contact info shown to users (e.g. @support_username)", "category": "general"},

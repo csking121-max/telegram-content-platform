@@ -42,7 +42,7 @@ export default function Tokens() {
               <td>{t.pack_id}</td>
               <td>{t.used_count}</td>
               <td>{t.single_use ? "Yes" : "No"}</td>
-              <td>{t.expires_at ? new Date(t.expires_at).toLocaleDateString() : "—"}</td>
+              <td>{t.expires_at ? new Date(t.expires_at).toLocaleDateString() : "♾️ Never"}</td>
               <td><button onClick={() => deleteToken(t.token).then(refetch)}>Revoke</button></td>
             </tr>
           ))}

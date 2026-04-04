@@ -37,6 +37,7 @@ async def _run_all() -> None:
     from workers.expiry_worker import ExpiryWorker
     from workers.expiry_notify_worker import ExpiryNotifyWorker
     from workers.payment_recheck_worker import PaymentRecheckWorker
+    from workers.low_credit_notify_worker import LowCreditNotifyWorker
 
     worker_type = os.getenv("WORKER_TYPE", "all").lower()
 
@@ -56,6 +57,8 @@ async def _run_all() -> None:
         tasks.append(asyncio.create_task(ExpiryNotifyWorker().run()))
     if worker_type in ("payment_recheck", "all"):
         tasks.append(asyncio.create_task(PaymentRecheckWorker().run()))
+    if worker_type in ("low_credit_notify", "all"):
+        tasks.append(asyncio.create_task(LowCreditNotifyWorker().run()))
 
     if not tasks:
         logger.error("Unknown WORKER_TYPE=%s", worker_type)

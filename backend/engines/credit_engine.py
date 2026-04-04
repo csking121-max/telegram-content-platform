@@ -80,6 +80,17 @@ class CreditEngine:
         except Exception as exc:
             logger.warning("Streak tracking failed for user=%s: %s", user_id, exc)
 
+        # Queue low-credit warning check
+        try:
+            from backend.redis_client import RedisClient
+            rc = RedisClient.get()
+            rc.enqueue("queue:low_credit_notify", {
+                "user_id": user_id,
+                "new_balance": new_balance,
+            })
+        except Exception as exc:
+            logger.warning("Low-credit notify enqueue failed for user=%s: %s", user_id, exc)
+
         return new_balance
 
     async def add(self, user_id: int, amount: int, reason: str) -> int:
@@ -93,6 +104,17 @@ class CreditEngine:
         self._record(user_id, amount, reason)
         await self.db.flush()
         logger.info("Added %s credits to user=%s reason=%s", amount, user_id, reason)
+
+        # Clear low-credit notification flags so user can be re-notified next time
+        try:
+            from backend.redis_client import RedisClient
+            rc = RedisClient.get()
+            keys = rc.client.keys(f"low_credit_notified:{user_id}:*")
+            if keys:
+                rc.client.delete(*keys)
+        except Exception as exc:
+            logger.warning("Failed to clear low-credit flags for user=%s: %s", user_id, exc)
+
         return credit.balance
 
     async def admin_set(self, user_id: int, new_balance: int, reason: str) -> int:
