@@ -167,7 +167,7 @@ async def collect_media(message: Message) -> None:
 
         # Build credit info line
         credit_info = ""
-        if category == "credits":
+        if category in ("credits", "credits_only"):
             mode = session.get("credit_mode", "per_item")
             if mode == "per_item":
                 cpi = session.get("credit_per_item", 1)
@@ -316,7 +316,7 @@ async def handle_category_selection(callback: CallbackQuery) -> None:
     session["selected_category"] = category
     await _safe_answer(callback)
 
-    if category == "credits":
+    if category in ("credits", "credits_only"):
         # Ask for credit mode
         session["state"] = "awaiting_credit_mode"
         buttons = [
@@ -626,7 +626,7 @@ async def _do_publish(message: Message, session: dict) -> None:
     credit_cost = session.get("credit_cost", 0)
 
     # Calculate sensible defaults for credits category
-    if category == "credits":
+    if category in ("credits", "credits_only"):
         if credit_mode == "per_item" and credit_per_item < 1:
             credit_per_item = 1
         if credit_mode == "per_pack" and credit_cost < 1:
@@ -694,7 +694,9 @@ async def _do_publish(message: Message, session: dict) -> None:
             thumbnail_file_id = session.get("thumbnail_file_id")
 
             # Build inline keyboard with deep link button
-            if category == "credits" and credit_cost > 0:
+            if category == "credits_only" and credit_cost > 0:
+                btn_label = f"Watch for {credit_cost} Credits"
+            elif category == "credits" and credit_cost > 0:
                 btn_label = f"Watch for {credit_cost} Credits"
             else:
                 btn_label = "Access Content"

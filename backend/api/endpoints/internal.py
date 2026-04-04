@@ -181,9 +181,10 @@ async def list_plan_categories_internal(
     seen = set()
     categories = [
         {"tag": "free", "display_name": "Free"},
-        {"tag": "credits", "display_name": "Credits"},
+        {"tag": "credits", "display_name": "Credits (free for members)"},
+        {"tag": "credits_only", "display_name": "Credits Only (always costs credits)"},
     ]
-    seen.update(("free", "credits"))
+    seen.update(("free", "credits", "credits_only"))
     for access_type, display_name, _ in result.all():
         if access_type not in seen:
             categories.append({"tag": access_type, "display_name": display_name or access_type.title()})
