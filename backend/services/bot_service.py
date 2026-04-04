@@ -21,6 +21,15 @@ class BotService:
         self.db = db
 
     async def register(self, data: BotCreate) -> Bot:
+        existing = await self.get_by_username(data.bot_username)
+        if existing:
+            # Re-activate / update the existing row instead of inserting a duplicate
+            for field, value in data.model_dump().items():
+                setattr(existing, field, value)
+            existing.status = "active"
+            await self.db.flush()
+            logger.info("Re-registered existing bot @%s (id=%d)", data.bot_username, existing.id)
+            return existing
         bot = Bot(**data.model_dump())
         self.db.add(bot)
         await self.db.flush()
