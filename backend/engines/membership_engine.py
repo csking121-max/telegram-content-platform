@@ -42,7 +42,38 @@ class MembershipEngine:
         membership_type: str,
         expiry_at: Optional[datetime] = None,
     ) -> Membership:
-        """Grant a new membership."""
+        """Grant or extend a membership.
+
+        If the user already has an active membership of the same type,
+        the new duration is added on top of the existing expiry (extension).
+        Otherwise a new membership row is created.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Look for an existing active membership of the same type
+        result = await self.db.execute(
+            select(Membership).where(
+                Membership.user_id == user_id,
+                Membership.membership_type == membership_type,
+                (Membership.expiry_at.is_(None)) | (Membership.expiry_at > now),
+            ).order_by(Membership.expiry_at.desc())
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing and expiry_at is not None:
+            # Extend: add the duration on top of current expiry
+            base = existing.expiry_at if existing.expiry_at and existing.expiry_at > now else now
+            extension = expiry_at - now  # the duration being purchased
+            existing.expiry_at = base + extension
+            existing.expiry_notified_at = None  # reset so expiry reminder fires again
+            await self.db.flush()
+            logger.info(
+                "Extended %s membership for user=%s until %s",
+                membership_type, user_id, existing.expiry_at,
+            )
+            return existing
+
+        # No active membership — create new
         membership = Membership(
             user_id=user_id,
             membership_type=membership_type,

@@ -870,7 +870,8 @@ async def _send_plan_detail(message: Message, plan: dict, show_all_plans_btn: bo
     icon = tier_icons.get(plan_tier, "\u2b50")
 
     # Check if plan is tier-locked for this user
-    tier_locked = plan_tier > 0 and user_max_tier >= plan_tier
+    tier_locked = plan_tier > 0 and user_max_tier > plan_tier
+    is_renewal = plan_tier > 0 and user_max_tier == plan_tier
 
     text = (
         f"{icon} **{_md_escape(pname)}** {icon}\n"
@@ -892,19 +893,27 @@ async def _send_plan_detail(message: Message, plan: dict, show_all_plans_btn: bo
     buttons: list[list[InlineKeyboardButton]] = []
 
     if tier_locked:
-        # User already has this tier or higher
-        if user_max_tier == plan_tier:
-            text += (
-                f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-                "\u2705 **You already have an active membership at this tier\\!**\n"
-                "_No need to repurchase — enjoy your current plan\\._"
-            )
-        else:
-            text += (
-                f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
-                "\U0001f451 **You have a higher\\-tier membership\\!**\n"
-                "_This plan is already included in your current access\\._"
-            )
+        # User has a higher tier
+        text += (
+            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+            "\U0001f451 **You have a higher\\-tier membership\\!**\n"
+            "_This plan is already included in your current access\\._"
+        )
+    elif is_renewal:
+        text += (
+            f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+            "\U0001f504 **Renew your membership\\!** Your current plan will be extended\\."
+        )
+        pay_row = [InlineKeyboardButton(
+            text=f"\U0001f504 Renew \u20b9{price} UPI",
+            callback_data=f"plan:{plan_id}",
+        )]
+        if credit_price > 0:
+            pay_row.append(InlineKeyboardButton(
+                text=f"\U0001fa99 Renew {credit_price} Credits",
+                callback_data=f"plan_credits:{plan_id}",
+            ))
+        buttons.append(pay_row)
     else:
         text += (
             f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"

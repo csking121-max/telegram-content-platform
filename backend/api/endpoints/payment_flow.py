@@ -69,16 +69,12 @@ async def create_payment_order(
     if plan and plan.tier_level > 0:
         membership_engine = MembershipEngine(db)
         user_max_tier = await membership_engine.get_user_max_tier_level(user.id)
-        if user_max_tier >= plan.tier_level:
-            if user_max_tier == plan.tier_level:
-                raise HTTPException(
-                    400,
-                    "You already have an active membership at this tier level.",
-                )
+        if user_max_tier > plan.tier_level:
             raise HTTPException(
                 400,
                 "You already have a higher tier membership. Only higher-tier plans can be purchased.",
             )
+        # Same-tier is allowed (renewal / extension)
 
     svc = PaymentOrderService(db)
     try:
@@ -321,20 +317,16 @@ async def buy_membership_with_credits(
     if plan.credit_price <= 0:
         raise HTTPException(400, "This plan cannot be purchased with credits.")
 
-    # Tier guard — block purchase of same-tier or lower-tier plans
+    # Tier guard — block purchase of lower-tier plans (same-tier = renewal)
     membership_engine = MembershipEngine(db)
     if plan.tier_level > 0:
         user_max_tier = await membership_engine.get_user_max_tier_level(user.id)
-        if user_max_tier >= plan.tier_level:
-            if user_max_tier == plan.tier_level:
-                raise HTTPException(
-                    400,
-                    "You already have an active membership at this tier level.",
-                )
+        if user_max_tier > plan.tier_level:
             raise HTTPException(
                 400,
                 "You already have a higher tier membership. Only higher-tier plans can be purchased.",
             )
+        # Same-tier is allowed (renewal / extension)
 
     credit_engine = CreditEngine(db)
 

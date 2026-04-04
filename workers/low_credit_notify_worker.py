@@ -196,7 +196,7 @@ class LowCreditNotifyWorker:
             for pkg in packages[:3]:
                 buttons.append([{
                     "text": f"\U0001fa99 {pkg.display_name} — {pkg.credits} credits \u20b9{pkg.price_inr}",
-                    "callback_data": f"buy_credits:{pkg.id}",
+                    "callback_data": f"creditpkg:{pkg.id}",
                 }])
         if plans:
             buttons.append([{
@@ -205,7 +205,7 @@ class LowCreditNotifyWorker:
             }])
         buttons.append([{
             "text": "\U0001f4b3 Buy Custom Credits",
-            "callback_data": "menu:buy_credits",
+            "callback_data": "custom_buy:enter",
         }])
 
         payload = {

@@ -186,7 +186,7 @@ def _build_keyboard(packages: list) -> list:
         for pkg in packages[:3]:
             buttons.append([{
                 "text": f"\U0001fa99 {pkg.display_name} \u2014 {pkg.credits} credits \u20b9{pkg.price_inr}",
-                "callback_data": f"buy_credits:{pkg.id}",
+                "callback_data": f"creditpkg:{pkg.id}",
             }])
     buttons.append([{
         "text": "\U0001f451 View Membership Plans",
@@ -194,7 +194,7 @@ def _build_keyboard(packages: list) -> list:
     }])
     buttons.append([{
         "text": "\U0001f4b3 Buy Custom Credits",
-        "callback_data": "menu:buy_credits",
+        "callback_data": "custom_buy:enter",
     }])
     return buttons
 
