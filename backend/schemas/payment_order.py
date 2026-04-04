@@ -26,7 +26,7 @@ class PaymentOrderRead(BaseModel):
 
     id: int
     user_id: int
-    plan_id: int
+    plan_id: Optional[int] = None
     package_id: Optional[int] = None
     amount: float
     upi_id_used: str
