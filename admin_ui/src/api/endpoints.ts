@@ -271,6 +271,11 @@ export const bulkUpdateSettings = (settings: Record<string, string>) =>
 export const deletePlatformSetting = (key: string) =>
   apiClient.delete(`/admin/settings/${key}`);
 
+/* ── Notifications ─────────────────────────────────────── */
+
+export const triggerLowCreditNotifications = () =>
+  apiClient.post<{ detail: string; sent: number; failed: number; total_qualifying: number }>("/admin/notifications/trigger-low-credit").then((r) => r.data);
+
 /* ── Test Panel ────────────────────────────────────────── */
 
 export interface TestResult {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useFetch } from "../hooks/useFetch";
 import type { PlatformSetting } from "../types";
-import { getPlatformSettings, bulkUpdateSettings } from "../api/endpoints";
+import { getPlatformSettings, bulkUpdateSettings, triggerLowCreditNotifications } from "../api/endpoints";
 
 const CATEGORIES = ["general", "telegram", "payment", "content", "credits", "notifications"];
 
@@ -39,6 +39,7 @@ export default function Settings() {
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [triggering, setTriggering] = useState(false);
 
   // Sync fetched settings into local state
   useEffect(() => {
@@ -70,6 +71,18 @@ export default function Settings() {
 
   const settingsByCategory = (category: string): PlatformSetting[] => {
     return (allSettings ?? []).filter((s) => s.category === category);
+  };
+
+  const handleTriggerLowCredit = async () => {
+    setTriggering(true);
+    setMessage("");
+    try {
+      const res = await triggerLowCreditNotifications();
+      setMessage(`✅ ${res.detail}`);
+    } catch (e) {
+      setMessage("❌ Failed to trigger low credit notifications");
+    }
+    setTriggering(false);
   };
 
   if (loading) return <p>Loading settings...</p>;
@@ -173,6 +186,29 @@ export default function Settings() {
                   )}
                 </div>
               ))}
+              {cat === "notifications" && (
+                <div style={{ borderTop: "1px solid #eee", paddingTop: 16, marginTop: 8 }}>
+                  <button
+                    onClick={handleTriggerLowCredit}
+                    disabled={triggering}
+                    style={{
+                      padding: "10px 20px",
+                      background: triggering ? "#95a5a6" : "#e67e22",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 6,
+                      cursor: triggering ? "default" : "pointer",
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {triggering ? "Sending…" : "⚡ Trigger Low Credit Notifications Now"}
+                  </button>
+                  <div style={{ fontSize: 12, color: "#888", marginTop: 6 }}>
+                    Sends a low-credit warning to ALL users whose balance is at or below the highest threshold. Ignores dedup — useful for testing.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         );

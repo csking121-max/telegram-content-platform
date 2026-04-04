@@ -15,6 +15,7 @@ from . import (
     logs,
     memberships,
     membership_plans,
+    notifications,
     pack_items,
     payment_management,
     platform_settings,
@@ -47,3 +48,4 @@ router.include_router(logs.router, prefix="/logs", tags=["admin-logs"])
 router.include_router(credit_packages.router, prefix="/credit-packages", tags=["admin-credit-packages"])
 router.include_router(streaks.router, prefix="/streaks", tags=["admin-streaks"])
 router.include_router(dlq.router, prefix="/dlq", tags=["admin-dlq"])
+router.include_router(notifications.router, prefix="/notifications", tags=["admin-notifications"])
