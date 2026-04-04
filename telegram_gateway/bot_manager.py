@@ -255,6 +255,7 @@ async def run_bots() -> bool:
     )
 
     bots: list[Bot] = []
+    seen_bot_ids: set[int] = set()
     for r in results:
         if isinstance(r, Exception):
             logger.error("Unexpected bot validation error: %s", r)
@@ -262,6 +263,11 @@ async def run_bots() -> bool:
         if r is None:
             continue
         bot_id, bot, username, secret, db_id = r
+        if bot_id in seen_bot_ids:
+            logger.warning("Duplicate bot id=%d (%s) skipped", bot_id, username)
+            await bot.session.close()
+            continue
+        seen_bot_ids.add(bot_id)
         _BOT_CONFIGS[bot_id] = {"username": username, "hmac_secret": secret, "db_id": db_id}
         bots.append(bot)
 
