@@ -35,8 +35,6 @@ async def get_public_settings(db: AsyncSession = Depends(get_db)):
     Does NOT require authentication.
     """
     svc = PlatformSettingsService(db)
-    await svc.seed_defaults()
-    await db.commit()
     all_settings = await svc.get_all()
     return [
         {"key": s.key, "value": s.value}

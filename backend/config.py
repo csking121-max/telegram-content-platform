@@ -88,6 +88,27 @@ class Settings:
     WORKER_POLL_INTERVAL: float = float(os.getenv("WORKER_POLL_INTERVAL", "1.0"))
 
     # ── Derived ──────────────────────────────────────
+    def validate_secrets(self) -> None:
+        """Raise on startup if critical secrets still have default values."""
+        issues: list[str] = []
+        if self.SECRET_KEY == "change-me":
+            issues.append("SECRET_KEY")
+        if self.ADMIN_PASSWORD == "change-me":
+            issues.append("ADMIN_PASSWORD")
+        if self.ADMIN_JWT_SECRET == "change-me-jwt":
+            issues.append("ADMIN_JWT_SECRET")
+        if issues and not self.DEBUG:
+            raise RuntimeError(
+                f"SECURITY: The following secrets still have default values and "
+                f"must be set via environment variables: {', '.join(issues)}"
+            )
+        if issues:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "SECURITY WARNING: Default secrets detected (DEBUG mode): %s",
+                ", ".join(issues),
+            )
+
     @property
     def COOKIE_SECURE(self) -> bool:
         """True only when serving over HTTPS (any CORS origin starts with https://).

@@ -35,6 +35,9 @@ from telegram_gateway.redis_state import (
 logger = logging.getLogger(__name__)
 payment_router = Router(name="payment")
 
+# In-memory fallback cache: telegram_id -> order_ref (used when backend is unreachable)
+_user_pending_orders: dict[int, str] = {}
+
 
 async def _safe_answer(callback: CallbackQuery, text: str = "", **kwargs) -> None:
     """Answer a callback query, silently ignoring expired-query errors."""
@@ -228,6 +231,16 @@ async def handle_plan_selection(callback: CallbackQuery) -> None:
 
     set_pending_order(user.id, order_ref)
 
+    # Format expiry as human-readable
+    expires_display = expires_at
+    if expires_at:
+        try:
+            from datetime import datetime as _dt
+            exp_dt = _dt.fromisoformat(expires_at)
+            expires_display = exp_dt.strftime("%d %b %Y, %I:%M %p")
+        except Exception:
+            pass
+
     text = (
         f"**Payment Order Created**\n\n"
         f"Plan: **{_md_escape(plan_name)}**\n"
@@ -237,7 +250,7 @@ async def handle_plan_selection(callback: CallbackQuery) -> None:
         f"1. Scan the QR code below with any UPI app\n"
         f"2. Complete the payment\n"
         f"3. Tap **Enter UTR** below and send your reference number\n\n"
-        f"This order expires at: {expires_at}\n"
+        f"This order expires at: {_md_escape(expires_display)}\n"
     )
 
     if upi_link:
@@ -321,7 +334,10 @@ async def handle_check_order(callback: CallbackQuery) -> None:
     kb = None
     if status == "verified":
         clear_pending_order(user.id)
-        text += "\nPayment verified! Your access has been granted."
+        text += "\n\u2705 Payment verified! Your access has been granted."
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="\u25c0\ufe0f Main Menu", callback_data="menu:main")],
+        ])
     elif status in ("expired", "failed"):
         clear_pending_order(user.id)
         text += "\nThis order has " + ("expired." if status == "expired" else "failed.")
@@ -329,6 +345,23 @@ async def handle_check_order(callback: CallbackQuery) -> None:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="\U0001f504 Retry Payment", callback_data=f"retry_pay:{order_ref}")],
             [InlineKeyboardButton(text="\U0001f195 New Order", callback_data="menu:plans")],
+        ])
+    elif status == "pending":
+        text += "\nOrder is waiting for payment. Complete the UPI payment and submit your UTR."
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Enter UTR", callback_data=f"enter_utr:{order_ref}")],
+            [InlineKeyboardButton(text="\U0001f504 Refresh", callback_data=f"check_order:{order_ref}")],
+            [InlineKeyboardButton(text="\u25c0\ufe0f Main Menu", callback_data="menu:main")],
+        ])
+    elif status == "utr_submitted":
+        text += "\nUTR submitted \u2014 waiting for verification. This usually takes a few minutes."
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="\U0001f504 Refresh", callback_data=f"check_order:{order_ref}")],
+            [InlineKeyboardButton(text="\u25c0\ufe0f Main Menu", callback_data="menu:main")],
+        ])
+    else:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="\u25c0\ufe0f Main Menu", callback_data="menu:main")],
         ])
 
     await callback.message.answer(text, reply_markup=kb, parse_mode="Markdown")  # type: ignore

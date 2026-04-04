@@ -117,7 +117,7 @@ class MembershipEngine:
             .select_from(Membership)
             .join(
                 MembershipPlan,
-                MembershipPlan.access_type == Membership.membership_type,
+                sa_func.lower(MembershipPlan.access_type) == sa_func.lower(Membership.membership_type),
             )
             .where(
                 Membership.user_id == user_id,

@@ -387,10 +387,16 @@ class PaymentOrderService:
         if order.user_id != user_id:
             return None
 
-        # Check that the plan is still active
-        plan = await self._get_plan(order.plan_id)
-        if not plan or not plan.is_active:
-            return None
+        # Validate the underlying product is still purchasable
+        if order.plan_id is not None:
+            plan = await self._get_plan(order.plan_id)
+            if not plan or not plan.is_active:
+                return None
+        elif order.package_id is not None:
+            pkg = await self._get_credit_package(order)
+            if not pkg:
+                return None
+        # custom_credits orders (plan_id=None, package_id=None) are always retryable
 
         # Reset order state
         order.status = "pending"

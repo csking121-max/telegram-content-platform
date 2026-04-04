@@ -58,7 +58,7 @@ class LowCreditNotifyWorker:
         logger.info("LowCreditNotifyWorker listening on %s", QUEUE)
 
         while True:
-            raw = rc.client.lpop(QUEUE)
+            raw = await asyncio.to_thread(rc.client.lpop, QUEUE)
             if not raw:
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
@@ -111,7 +111,10 @@ class LowCreditNotifyWorker:
         # Check Redis dedup: already notified for this threshold?
         dedup_key = f"low_credit_notified:{user_id}:{triggered_threshold}"
         # Set with NX — only succeeds if not already set. TTL 24h.
-        if rc.client.set(dedup_key, "1", nx=True, ex=86400) is None:
+        already_set = await asyncio.to_thread(
+            lambda: rc.client.set(dedup_key, "1", nx=True, ex=86400)
+        )
+        if already_set is None:
             return  # Already notified
 
         # Also mark all lower thresholds as notified so we don't double-notify
@@ -119,7 +122,9 @@ class LowCreditNotifyWorker:
             if t >= triggered_threshold:
                 continue
             lower_key = f"low_credit_notified:{user_id}:{t}"
-            rc.client.set(lower_key, "1", nx=True, ex=86400)
+            await asyncio.to_thread(
+                lambda k=lower_key: rc.client.set(k, "1", nx=True, ex=86400)
+            )
 
         # Resolve telegram_id
         user_result = await db.execute(

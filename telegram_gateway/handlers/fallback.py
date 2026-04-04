@@ -15,9 +15,10 @@ async def handle_fallback(message: Message) -> None:
         "I didn't understand that.\n\n"
         "Available commands:\n"
         "/start - Main menu\n"
-        "/upload - Upload content (in storage group)\n"
         "/plans - Browse membership plans\n"
         "/buy - Purchase a membership\n"
         "/pay <UTR> - Submit payment reference\n"
-        "/mystatus - Check payment status"
+        "/mystatus - Check payment status\n"
+        "/profile - View your profile\n"
+        "/menu - Show main menu"
     )

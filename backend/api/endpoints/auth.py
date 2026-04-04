@@ -101,13 +101,12 @@ async def admin_login(body: LoginRequest, request: Request, response: Response):
         _record_failed_attempt(client_ip)
         raise HTTPException(401, "Invalid credentials")
 
-    # ADMIN_PASSWORD can be a bcrypt hash or plain text
-    # For production, set it to a bcrypt hash of your password
+    # ADMIN_PASSWORD should be a bcrypt hash in production
     try:
         valid = verify_password(body.password, settings.ADMIN_PASSWORD)
     except Exception:
-        # If ADMIN_PASSWORD is plain text, use timing-safe comparison
-        valid = _secrets.compare_digest(body.password, settings.ADMIN_PASSWORD)
+        logger.warning("Password verification failed — ADMIN_PASSWORD may not be a bcrypt hash")
+        valid = False
 
     if not valid:
         _record_failed_attempt(client_ip)

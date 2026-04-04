@@ -64,14 +64,35 @@ _join_cache: dict[tuple[str, int], tuple[bool, float]] = {}
 _JOIN_CACHE_TTL = 300  # 5 minutes
 _JOIN_CACHE_MAX = 10_000  # max entries before eviction
 
+# -- Settings cache (shared across all handlers) --
+_SETTINGS_CACHE_TTL = 60  # seconds
+_settings_cache: dict[str, object] = {"data": None, "expires": 0.0}
+
+
 async def _get_settings_map() -> dict[str, str]:
-    """Fetch public platform settings and return as {key: value} dict."""
+    """Fetch public platform settings and return as {key: value} dict.
+
+    Results are cached for 60 seconds to avoid repeated HTTP calls.
+    """
+    now = time.monotonic()
+    if (
+        _settings_cache["data"] is not None
+        and now < _settings_cache["expires"]  # type: ignore[operator]
+    ):
+        return _settings_cache["data"]  # type: ignore[return-value]
+
     try:
         settings_data = await api_get("/settings/public")
         if isinstance(settings_data, list):
-            return {s["key"]: s.get("value", "") for s in settings_data}
+            result = {s["key"]: s.get("value", "") for s in settings_data}
+            _settings_cache["data"] = result
+            _settings_cache["expires"] = now + _SETTINGS_CACHE_TTL
+            return result
     except Exception:
         pass
+    # Return stale cache if fetch failed
+    if _settings_cache["data"] is not None:
+        return _settings_cache["data"]  # type: ignore[return-value]
     return {}
 
 
@@ -103,9 +124,11 @@ async def _check_channel_join(bot: Bot, user_id: int, settings: dict[str, str]) 
         joined = member.status in ("member", "administrator", "creator")
         # Evict oldest entries if cache is too large
         if len(_join_cache) >= _JOIN_CACHE_MAX:
-            # Remove ~20% of entries (oldest by expiry)
-            to_remove = sorted(_join_cache, key=lambda k: _join_cache[k][1])[:_JOIN_CACHE_MAX // 5]
-            for k in to_remove:
+            # Remove ~20% of entries at random (O(1) per key)
+            import random
+            evict_count = _JOIN_CACHE_MAX // 5
+            evict_keys = random.sample(list(_join_cache.keys()), min(evict_count, len(_join_cache)))
+            for k in evict_keys:
                 _join_cache.pop(k, None)
         _join_cache[cache_key] = (joined, time.monotonic() + _JOIN_CACHE_TTL)
         return joined
@@ -124,18 +147,19 @@ def _resolve_welcome_placeholders(
     """Replace supported placeholders in a welcome message template.
 
     Supported: {user_name}, {username}, {platform_name}, {user_id}
-    Unknown placeholders are left as-is to avoid breaking Markdown.
+    Uses a single-pass regex to avoid cascading replacements if a user's
+    name happens to contain another placeholder string.
     """
+    import re
+
     replacements = {
         "{user_name}": display_name,
         "{username}": f"@{username}" if username else display_name,
         "{platform_name}": platform_name,
         "{user_id}": str(user_id),
     }
-    result = template
-    for placeholder, value in replacements.items():
-        result = result.replace(placeholder, value)
-    return result
+    pattern = re.compile("|".join(re.escape(k) for k in replacements))
+    return pattern.sub(lambda m: replacements[m.group(0)], template)
 
 
 def _build_join_channel_kb(channel_link: str, token: str | None = None) -> InlineKeyboardMarkup:
@@ -438,15 +462,8 @@ async def handle_menu(message: Message) -> None:
     if not user:
         return
 
-    content_channel = ""
-    try:
-        settings_data = await api_get("/settings/public")
-        if isinstance(settings_data, list):
-            for s in settings_data:
-                if s.get("key") == "content_channel_link":
-                    content_channel = s.get("value", "")
-    except Exception:
-        pass
+    settings_map = await _get_settings_map()
+    content_channel = settings_map.get("content_channel_link", "")
 
     kb = _build_main_menu(content_channel)
     await _tracked_answer(message, "**Main Menu** - choose an option:", reply_markup=kb, parse_mode="Markdown")
@@ -495,10 +512,51 @@ async def handle_check_join(callback: CallbackQuery) -> None:
     welcome_msg = settings.get("bot_welcome_message", "Choose an option below:")
 
     if token_part:
-        # They had a deep-link token, tell them to re-click
-        await callback.message.answer(  # type: ignore
-            "Channel verified! Please tap your original content link again to access it.",
-        )
+        # Auto-resolve the token — pass it through the access check flow
+        try:
+            result = await forward_to_backend(
+                bot_username=(await bot.get_me()).username or "",
+                hmac_secret="",
+                data={
+                    "telegram_id": user.id,
+                    "username": user.username,
+                    "action": "access_check",
+                    "token": token_part,
+                },
+            )
+            if result and result.get("allowed") and result.get("pack_id"):
+                delete_after = int(settings.get("content_delete_seconds", "0") or "0")
+                credits_deducted = result.get("credits_deducted", 0)
+                if credits_deducted > 0:
+                    notif = await callback.message.answer(  # type: ignore
+                        f"✅ Channel verified! Access granted \\({credits_deducted} credits deducted\\).\nDelivering your content..."
+                    )
+                else:
+                    notif = await callback.message.answer(  # type: ignore
+                        "✅ Channel verified! Access granted \\- delivering your content..."
+                    )
+                delivered_ids = await _deliver_content(callback.message, result["pack_id"])  # type: ignore
+                if delete_after > 0 and delivered_ids:
+                    asyncio.create_task(
+                        _schedule_delete(bot, callback.message.chat.id, [notif.message_id] + delivered_ids, delete_after)  # type: ignore
+                    )
+            else:
+                reason = result.get("reason", "") if result else ""
+                upgrade_opts = result.get("upgrade_options") or [] if result else []
+                if upgrade_opts:
+                    kb = _build_access_denied_menu(upgrade_opts=upgrade_opts)
+                else:
+                    kb = _build_access_denied_menu(reason)
+                await callback.message.answer(  # type: ignore
+                    f"✅ Channel verified!\\n\\n⛔ {_md_escape(reason or 'Access denied.')}",
+                    reply_markup=kb,
+                    parse_mode="Markdown",
+                )
+        except Exception:
+            logger.exception("Token resolution after channel join failed for user %s", user.id)
+            await callback.message.answer(  # type: ignore
+                "✅ Channel verified! Please tap your content link again to access it.",
+            )
     else:
         display_name = user.first_name or user.username or "there"
 
@@ -542,15 +600,8 @@ async def handle_menu_callback(callback: CallbackQuery) -> None:
         await _start_ad_watch(callback.message, user.id)  # type: ignore
 
     elif action == "main":
-        content_channel = ""
-        try:
-            settings_data = await api_get("/settings/public")
-            if isinstance(settings_data, list):
-                for s in settings_data:
-                    if s.get("key") == "content_channel_link":
-                        content_channel = s.get("value", "")
-        except Exception:
-            pass
+        settings_map = await _get_settings_map()
+        content_channel = settings_map.get("content_channel_link", "")
         kb = _build_main_menu(content_channel)
         await callback.message.answer("**Main Menu** - choose an option:", reply_markup=kb, parse_mode="Markdown")  # type: ignore
 
@@ -558,15 +609,8 @@ async def handle_menu_callback(callback: CallbackQuery) -> None:
         await _show_pending_orders(callback.message, user.id)  # type: ignore
 
     elif action == "help":
-        support = ""
-        try:
-            settings_data = await api_get("/settings/public")
-            if isinstance(settings_data, list):
-                for s in settings_data:
-                    if s.get("key") == "support_contact":
-                        support = s.get("value", "")
-        except Exception:
-            pass
+        settings_map = await _get_settings_map()
+        support = settings_map.get("support_contact", "")
         text = (
             "**Help**\n\n"
             "**Commands:**\n"

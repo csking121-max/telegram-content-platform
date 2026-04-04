@@ -45,8 +45,12 @@ async def verify_internal_key(
     """
     configured = settings.INTERNAL_API_KEY
     if not configured:
-        # No key configured — allow (dev mode)
-        return
+        if not settings.DEBUG:
+            raise HTTPException(
+                status_code=503,
+                detail="Internal API key not configured. Set INTERNAL_API_KEY env var.",
+            )
+        return  # Allow in DEBUG mode only
     if not _secrets.compare_digest(x_internal_key, configured):
         raise HTTPException(status_code=403, detail="Invalid internal API key")
 

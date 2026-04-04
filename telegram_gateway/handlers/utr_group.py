@@ -18,15 +18,44 @@ from telegram_gateway.http_client import BACKEND_URL
 logger = logging.getLogger(__name__)
 utr_group_router = Router(name="utr_group")
 
+# Pre-validated group IDs loaded from settings at startup, refreshed on miss.
+_allowed_chat_ids: set[int] = set()
+
+
+async def _is_allowed_group(chat_id: int) -> bool:
+    """Check if this chat_id is the configured UTR group."""
+    global _allowed_chat_ids
+    if chat_id in _allowed_chat_ids:
+        return True
+    # Refresh from backend settings
+    try:
+        import httpx
+        async with httpx.AsyncClient(base_url=BACKEND_URL, timeout=5) as client:
+            resp = await client.get("/settings/public")
+            if resp.status_code == 200:
+                for s in resp.json():
+                    if s.get("key") == "utr_group_chat_id" and s.get("value"):
+                        _allowed_chat_ids = {int(s["value"])}
+                        return chat_id in _allowed_chat_ids
+    except Exception:
+        pass
+    return False
+
 
 @utr_group_router.message(F.chat.type.in_({"group", "supergroup"}))
 async def handle_group_message(message: Message) -> None:
     """
     Catches ALL messages in groups the bot is in.
+    Only processes messages from the configured UTR verification group.
     Extracts text content (including from forwarded messages)
     and forwards to backend for UTR matching.
     """
     chat_id = message.chat.id
+
+    # Only process messages from the authorised UTR group
+    if not await _is_allowed_group(chat_id):
+        return
+
     from_user = message.from_user
     from_name = (from_user.full_name if from_user else "unknown")
     from_id = (from_user.id if from_user else 0)

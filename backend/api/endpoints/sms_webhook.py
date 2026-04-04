@@ -27,6 +27,7 @@ from backend.schemas.sms_log import SmsLogRead
 from backend.services.payment_order_service import PaymentOrderService
 from backend.services.platform_settings_service import PlatformSettingsService
 from backend.services.sms_verification_service import SmsVerificationService
+from backend.api.endpoints.internal import verify_internal_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -64,7 +65,9 @@ async def _process_and_match(
             select(PaymentOrder).where(PaymentOrder.id == sms.matched_order_id)
         )
         order = result.scalar_one_or_none()
-        if order and order.status in ("pending", "utr_submitted"):
+        # Only grant if the order is still unverified (prevents double-grant
+        # when recheck_pending_orders already verified it in the same cycle)
+        if order and order.status not in ("verified", "expired", "failed"):
             await order_svc._grant_access(order.order_ref, order.user_id)
             user_result = await db.execute(
                 select(User.telegram_id).where(User.id == order.user_id)
@@ -157,6 +160,7 @@ class TgProxyPayload(BaseModel):
 async def telegram_proxy(
     body: TgProxyPayload,
     db: AsyncSession = Depends(get_db),
+    _auth: None = Depends(verify_internal_key),
 ):
     """
     Telegram-compatible proxy endpoint for SMS Forwarder apps.
@@ -217,6 +221,7 @@ async def telegram_proxy(
 async def sms_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    _auth: None = Depends(verify_internal_key),
 ):
     """
     Universal webhook for SMS Forwarder apps in URL/Webhook mode.

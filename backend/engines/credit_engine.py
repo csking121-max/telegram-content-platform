@@ -4,8 +4,7 @@ Credit Engine — ALL credit mutations go through here.
 Every change is wrapped in an atomic transaction and recorded in credit_history.
 """
 from __future__ import annotations
-
-import logging
+import asyncioimport logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update
@@ -84,7 +83,7 @@ class CreditEngine:
         try:
             from backend.redis_client import RedisClient
             rc = RedisClient.get()
-            rc.enqueue("queue:low_credit_notify", {
+            await asyncio.to_thread(rc.enqueue, "queue:low_credit_notify", {
                 "user_id": user_id,
                 "new_balance": new_balance,
             })
@@ -109,9 +108,18 @@ class CreditEngine:
         try:
             from backend.redis_client import RedisClient
             rc = RedisClient.get()
-            keys = rc.client.keys(f"low_credit_notified:{user_id}:*")
-            if keys:
-                rc.client.delete(*keys)
+
+            def _clear_flags() -> None:
+                cursor = 0
+                pattern = f"low_credit_notified:{user_id}:*"
+                while True:
+                    cursor, keys = rc.client.scan(cursor, match=pattern, count=100)
+                    if keys:
+                        rc.client.delete(*keys)
+                    if cursor == 0:
+                        break
+
+            await asyncio.to_thread(_clear_flags)
         except Exception as exc:
             logger.warning("Failed to clear low-credit flags for user=%s: %s", user_id, exc)
 

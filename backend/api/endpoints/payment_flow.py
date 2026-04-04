@@ -31,6 +31,7 @@ from backend.services.sms_verification_service import SmsVerificationService
 from backend.services.user_service import UserService
 from backend.engines.credit_engine import CreditEngine
 from backend.engines.membership_engine import MembershipEngine
+from backend.api.endpoints.internal import verify_internal_key
 
 router = APIRouter()
 
@@ -72,7 +73,7 @@ async def create_payment_order(
         if user_max_tier > plan.tier_level:
             raise HTTPException(
                 400,
-                "You already have a higher tier membership. Only higher-tier plans can be purchased.",
+                "You already have a higher-tier membership. This plan would be a downgrade.",
             )
         # Same-tier is allowed (renewal / extension)
 
@@ -166,6 +167,7 @@ async def retry_payment_order(
 async def get_my_pending_orders(
     telegram_id: int,
     db: AsyncSession = Depends(get_db),
+    _auth: None = Depends(verify_internal_key),
 ):
     """Return active (pending / utr_submitted) non-expired orders for a user."""
     user_svc = UserService(db)
@@ -324,7 +326,7 @@ async def buy_membership_with_credits(
         if user_max_tier > plan.tier_level:
             raise HTTPException(
                 400,
-                "You already have a higher tier membership. Only higher-tier plans can be purchased.",
+                "You already have a higher-tier membership. This plan would be a downgrade.",
             )
         # Same-tier is allowed (renewal / extension)
 

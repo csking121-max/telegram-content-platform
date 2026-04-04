@@ -37,12 +37,19 @@ async def check_access(
         token_str=body.token,
     )
 
+    # Log access check — resolve user_id from telegram_id (skip if not found)
     activity = ActivityLogger(db)
-    await activity.log(
-        user_id=0,
-        action="access_check",
-        payload={"token": body.token, "allowed": result.allowed, "reason": result.reason},
-    )
+    log_user_id: int = 0
+    if body.telegram_id:
+        from sqlalchemy import select as _sel
+        _u = await db.execute(_sel(User.id).where(User.telegram_id == body.telegram_id))
+        log_user_id = _u.scalar_one_or_none() or 0
+    if log_user_id:
+        await activity.log(
+            user_id=log_user_id,
+            action="access_check",
+            payload={"token": body.token, "allowed": result.allowed, "reason": result.reason},
+        )
     await db.commit()
 
     if not result.allowed:

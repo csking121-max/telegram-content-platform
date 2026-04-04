@@ -22,25 +22,25 @@ class User(Base):
 
     # ── Relationships ────────────────────────────────
     credit: Mapped[Optional["Credit"]] = relationship(  # noqa: F821
-        "Credit", back_populates="user", uselist=False, lazy="selectin",
+        "Credit", back_populates="user", uselist=False, lazy="select",
     )
     memberships: Mapped[List["Membership"]] = relationship(  # noqa: F821
-        "Membership", back_populates="user", lazy="selectin",
+        "Membership", back_populates="user", lazy="select",
     )
     payments: Mapped[List["Payment"]] = relationship(  # noqa: F821
-        "Payment", back_populates="user", lazy="selectin",
+        "Payment", back_populates="user", lazy="select",
     )
     credit_history: Mapped[List["CreditHistory"]] = relationship(  # noqa: F821
-        "CreditHistory", back_populates="user", lazy="dynamic",
+        "CreditHistory", back_populates="user", lazy="select",
     )
     activity_logs: Mapped[List["ActivityLog"]] = relationship(  # noqa: F821
-        "ActivityLog", back_populates="user", lazy="dynamic",
+        "ActivityLog", back_populates="user", lazy="select",
     )
     referrals_made: Mapped[List["Referral"]] = relationship(  # noqa: F821
         "Referral",
         back_populates="referrer",
         foreign_keys="Referral.referrer_user_id",
-        lazy="dynamic",
+        lazy="select",
     )
 
     def __repr__(self) -> str:

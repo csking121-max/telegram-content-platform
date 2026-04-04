@@ -82,10 +82,23 @@ async def lifespan(app: FastAPI):
     _setup_logging()
     logger.info("Starting Telegram Content Access Platform …")
 
-    # Create tables if they don't exist (dev convenience – use Alembic in prod)
+    # Validate secrets before anything else
+    settings.validate_secrets()
+
+    # Create tables if they don't exist (dev convenience \u2013 use Alembic in prod)
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables verified.")
+
+    # Seed default platform settings (once at startup, not per-request)
+    from backend.database import AsyncSessionLocal
+    from backend.services.platform_settings_service import PlatformSettingsService
+    async with AsyncSessionLocal() as db:
+        svc = PlatformSettingsService(db)
+        seeded = await svc.seed_defaults()
+        await db.commit()
+        if seeded:
+            logger.info("Seeded %d default settings at startup", seeded)
 
     # Start auto-cleanup background task
     cleanup_task = asyncio.create_task(_cleanup_worker())

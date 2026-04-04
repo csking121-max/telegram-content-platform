@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.membership import Membership
@@ -25,18 +25,28 @@ class ExpiryService:
         self.db = db
 
     async def expire_memberships(self) -> int:
-        """Delete expired memberships. Returns count expired."""
+        """Soft-expire memberships by setting expiry_at to now.
+
+        Rows are kept for history and so that the expiry_notify_worker
+        can act on ``expiry_notified_at`` before any cleanup.
+        Only touches rows whose expiry_at is in the past and that haven't
+        already been soft-expired (``expiry_at <= now``).
+        """
         now = datetime.now(timezone.utc)
         result = await self.db.execute(
-            delete(Membership).where(
+            select(Membership).where(
                 Membership.expiry_at.isnot(None),
                 Membership.expiry_at <= now,
             )
         )
-        count = result.rowcount
+        memberships = list(result.scalars().all())
+        count = len(memberships)
         if count:
+            # Mark as expired at exactly `now` so is_active becomes False
+            for m in memberships:
+                m.expiry_at = now
             await self.db.flush()
-            logger.info("Deleted %d expired memberships", count)
+            logger.info("Soft-expired %d memberships", count)
         return count
 
     async def expire_ad_tokens(self) -> int:
