@@ -1,24 +1,29 @@
 """
 Admin Content Factory — bulk upload & publish pipeline.
 
-Endpoints for uploading files to Telegram Storage Group
-and publishing them as content packs with deep links.
+Endpoints for uploading files to Telegram Storage Group,
+managing default thumbnails, and publishing content packs
+with persistent job tracking that survives tab switches.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import AsyncSessionLocal
 from backend.dependencies import get_db
+from backend.models.default_thumbnail import DefaultThumbnail
+from backend.models.publish_job import PublishJob
 from backend.models.token import Token
 from backend.services.bot_service import BotService
 from backend.services.content_service import ContentService
@@ -32,8 +37,8 @@ router = APIRouter()
 
 TELEGRAM_API = "https://api.telegram.org"
 
-# ── In-memory publish job tracker ────────────────────────────
-_publish_jobs: dict[str, dict] = {}
+# Track running asyncio tasks so multiple jobs can run concurrently
+_running_tasks: dict[str, asyncio.Task] = {}
 
 
 # ── Telegram helpers ─────────────────────────────────────────
@@ -48,11 +53,7 @@ async def _get_first_active_bot(db: AsyncSession):
 
 
 async def _get_storage_group_id(db: AsyncSession) -> int:
-    """Get storage_group_id from platform settings.
-    
-    Telegram group/channel chat IDs are negative (prefixed with -100).
-    Auto-fix if someone stores only the numeric part without the minus sign.
-    """
+    """Get storage_group_id from platform settings."""
     svc = PlatformSettingsService(db)
     val = await svc.get("storage_group_id")
     if not val:
@@ -61,7 +62,6 @@ async def _get_storage_group_id(db: AsyncSession) -> int:
             "storage_group_id not configured. Set it in Settings → Content.",
         )
     chat_id = int(val)
-    # Auto-fix: if positive and looks like a supergroup/channel ID, prepend -100
     if chat_id > 0 and len(str(chat_id)) >= 10:
         chat_id = int(f"-100{chat_id}")
     return chat_id
@@ -108,7 +108,6 @@ async def _tg_request(token: str, method: str, payload: dict) -> dict | None:
 # ── Upload helpers ────────────────────────────────────────────
 
 def _detect_media_type(content_type: str) -> str:
-    """Map MIME content_type to Telegram media category."""
     ct = content_type.lower()
     if ct.startswith("video/"):
         return "video"
@@ -116,12 +115,10 @@ def _detect_media_type(content_type: str) -> str:
         return "animation"
     if ct.startswith("image/"):
         return "photo"
-    # Everything else (pdf, zip, etc.) → document
     return "document"
 
 
 def _tg_method_for_type(media_type: str) -> tuple[str, str]:
-    """Return (Telegram API method, multipart field name) for media_type."""
     return {
         "video": ("sendVideo", "video"),
         "photo": ("sendPhoto", "photo"),
@@ -137,14 +134,13 @@ async def upload_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload any file to the Telegram Storage Group. Returns storage metadata."""
+    """Upload any file to the Telegram Storage Group."""
     ct = file.content_type or "application/octet-stream"
     media_type = _detect_media_type(ct)
 
     bot = await _get_first_active_bot(db)
     storage_group_id = await _get_storage_group_id(db)
 
-    # Telegram Bot API limit: 50 MB for cloud API, 2 GB for local bot API server
     file_bytes = await file.read()
     size_mb = len(file_bytes) / (1024 * 1024)
     if size_mb > 2048:
@@ -157,7 +153,6 @@ async def upload_file(
     if media_type == "video":
         extra_data["supports_streaming"] = "true"
 
-    # Scale timeout with file size: ~60s per 50MB, minimum 120s
     upload_timeout = max(120, int(size_mb / 50 * 60) + 60)
 
     result = await _tg_upload_file(
@@ -176,7 +171,6 @@ async def upload_file(
 
     msg = result["result"]
 
-    # Extract file_id from the relevant message field
     file_id = ""
     info: dict = {}
     if media_type == "video":
@@ -188,7 +182,7 @@ async def upload_file(
     elif media_type == "animation":
         info = msg.get("animation") or {}
         file_id = info.get("file_id", "")
-    else:  # document
+    else:
         info = msg.get("document") or {}
         file_id = info.get("file_id", "")
 
@@ -209,7 +203,7 @@ async def upload_thumbnail(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a thumbnail image to Telegram Storage Group. Returns file_id."""
+    """Upload a thumbnail image to Telegram Storage Group."""
     ct = file.content_type or ""
     if not ct.startswith("image/"):
         raise HTTPException(400, f"Only image files accepted (got {ct})")
@@ -238,6 +232,74 @@ async def upload_thumbnail(
     return {"file_id": file_id, "message_id": msg["message_id"]}
 
 
+# ── Default Thumbnails CRUD ──────────────────────────────────
+
+@router.get("/default-thumbnails")
+async def list_default_thumbnails(db: AsyncSession = Depends(get_db)):
+    """List all saved default thumbnails."""
+    result = await db.execute(
+        select(DefaultThumbnail).order_by(DefaultThumbnail.id)
+    )
+    thumbs = result.scalars().all()
+    return [
+        {"id": t.id, "name": t.name, "file_id": t.file_id}
+        for t in thumbs
+    ]
+
+
+class CreateDefaultThumbnailRequest(BaseModel):
+    name: str
+    file_id: str
+
+
+@router.post("/default-thumbnails")
+async def create_default_thumbnail(
+    body: CreateDefaultThumbnailRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Save a new default thumbnail (name + file_id from a previous upload)."""
+    thumb = DefaultThumbnail(name=body.name, file_id=body.file_id)
+    db.add(thumb)
+    await db.commit()
+    await db.refresh(thumb)
+    return {"id": thumb.id, "name": thumb.name, "file_id": thumb.file_id}
+
+
+class RenameDefaultThumbnailRequest(BaseModel):
+    name: str
+
+
+@router.patch("/default-thumbnails/{thumb_id}")
+async def rename_default_thumbnail(
+    thumb_id: int,
+    body: RenameDefaultThumbnailRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Rename a default thumbnail."""
+    result = await db.execute(
+        select(DefaultThumbnail).where(DefaultThumbnail.id == thumb_id)
+    )
+    thumb = result.scalar_one_or_none()
+    if not thumb:
+        raise HTTPException(404, "Thumbnail not found")
+    thumb.name = body.name
+    await db.commit()
+    return {"id": thumb.id, "name": thumb.name, "file_id": thumb.file_id}
+
+
+@router.delete("/default-thumbnails/{thumb_id}")
+async def delete_default_thumbnail(
+    thumb_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a default thumbnail."""
+    await db.execute(
+        delete(DefaultThumbnail).where(DefaultThumbnail.id == thumb_id)
+    )
+    await db.commit()
+    return {"deleted": True}
+
+
 # ── Publish schemas ──────────────────────────────────────────
 
 class PublishItem(BaseModel):
@@ -264,10 +326,10 @@ class GroupSettings(BaseModel):
 
 
 class PublishRequest(BaseModel):
-    mode: str = "solo"  # "solo" or "group"
+    mode: str = "solo"
     items: list[PublishItem]
     group_settings: GroupSettings | None = None
-    rate_per_minute: int = 2
+    rate_per_minute: int = 0  # 0 = send all at once (no delay)
     deletion_seconds: int | None = None
 
 
@@ -285,7 +347,6 @@ async def start_publish(
     if body.mode == "group" and not body.group_settings:
         raise HTTPException(400, "group_settings required for group mode")
 
-    # Validate referenced bots exist
     svc = BotService(db)
     if body.mode == "group":
         bot = await svc.get_by_id(body.group_settings.bot_id)
@@ -299,48 +360,76 @@ async def start_publish(
                 raise HTTPException(404, f"Bot ID {bid} not found")
 
     job_id = uuid.uuid4().hex[:12]
-    job = {
-        "id": job_id,
-        "status": "queued",
-        "mode": body.mode,
-        "total": len(body.items),
-        "completed": 0,
-        "failed": 0,
-        "results": [],
-        "rate_per_minute": body.rate_per_minute,
-    }
-    _publish_jobs[job_id] = job
 
-    # Serialise body for the background task (avoid sharing SQLAlchemy session)
-    asyncio.create_task(_process_publish_job(job_id, body))
+    # Persist job in DB so it survives tab switches / reconnects
+    job_row = PublishJob(
+        id=job_id,
+        status="queued",
+        mode=body.mode,
+        total=len(body.items),
+        completed=0,
+        failed=0,
+        rate_per_minute=body.rate_per_minute,
+        results="[]",
+    )
+    db.add(job_row)
+    await db.commit()
+
+    task = asyncio.create_task(_process_publish_job(job_id, body))
+    _running_tasks[job_id] = task
+    task.add_done_callback(lambda t: _running_tasks.pop(job_id, None))
 
     return {"job_id": job_id, "status": "queued", "total": len(body.items)}
 
 
 # ── Background publishing logic ──────────────────────────────
 
+async def _update_job(job_id: str, **fields):
+    """Update job fields in DB."""
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(PublishJob)
+            .where(PublishJob.id == job_id)
+            .values(updated_at=datetime.now(timezone.utc), **fields)
+        )
+        await db.commit()
+
+
+async def _append_result(job_id: str, result_item: dict, completed_delta: int = 0, failed_delta: int = 0):
+    """Append a result to the job's results list in DB."""
+    async with AsyncSessionLocal() as db:
+        row = await db.get(PublishJob, job_id)
+        if not row:
+            return
+        results = row.results_list
+        results.append(result_item)
+        row.results_list = results
+        row.completed += completed_delta
+        row.failed += failed_delta
+        row.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+
+
 async def _process_publish_job(job_id: str, body: PublishRequest):
     """Background task to process publish queue."""
-    job = _publish_jobs[job_id]
-    job["status"] = "processing"
+    await _update_job(job_id, status="processing")
 
-    delay = 60.0 / max(body.rate_per_minute, 1)
+    delay = (60.0 / body.rate_per_minute) if body.rate_per_minute > 0 else 0
 
     try:
         if body.mode == "group":
-            await _publish_group(job, body)
+            await _publish_group(job_id, body)
         else:
-            await _publish_solo(job, body, delay)
+            await _publish_solo(job_id, body, delay)
     except Exception as e:
         logger.error("Publish job %s failed: %s", job_id, e, exc_info=True)
-        job["status"] = "failed"
-        job["error"] = str(e)
+        await _update_job(job_id, status="failed", error=str(e))
         return
 
-    job["status"] = "completed"
+    await _update_job(job_id, status="completed")
 
 
-async def _publish_group(job: dict, body: PublishRequest):
+async def _publish_group(job_id: str, body: PublishRequest):
     """Publish all items as a single group pack with one deep link."""
     gs = body.group_settings
 
@@ -383,18 +472,17 @@ async def _publish_group(job: dict, body: PublishRequest):
             len(body.items), deep_link, gs.thumbnail_file_id,
         )
 
-        job["completed"] = len(body.items)
-        job["results"].append({
+        await _append_result(job_id, {
             "pack_id": pack.id,
             "token": token.token,
             "deep_link": deep_link,
             "items_count": len(body.items),
             "channel_posted": channel_posted,
             "title": gs.title,
-        })
+        }, completed_delta=len(body.items))
 
 
-async def _publish_solo(job: dict, body: PublishRequest, delay: float):
+async def _publish_solo(job_id: str, body: PublishRequest, delay: float):
     """Publish each item as a separate pack with its own deep link."""
     for idx, item in enumerate(body.items):
         try:
@@ -435,22 +523,19 @@ async def _publish_solo(job: dict, body: PublishRequest, delay: float):
                     1, deep_link, item.thumbnail_file_id,
                 )
 
-                job["completed"] += 1
-                job["results"].append({
+                await _append_result(job_id, {
                     "pack_id": pack.id,
                     "token": token.token,
                     "deep_link": deep_link,
                     "items_count": 1,
                     "channel_posted": channel_posted,
                     "title": title,
-                })
+                }, completed_delta=1)
         except Exception as e:
             logger.error("Failed to publish item %d: %s", idx, e, exc_info=True)
-            job["failed"] += 1
-            job["results"].append({"error": str(e), "index": idx})
+            await _append_result(job_id, {"error": str(e), "index": idx}, failed_delta=1)
 
-        # Rate-limit between items
-        if idx < len(body.items) - 1:
+        if delay > 0 and idx < len(body.items) - 1:
             await asyncio.sleep(delay)
 
 
@@ -493,7 +578,6 @@ async def _post_to_channel(
         if result:
             return True
 
-    # Fallback: text message with deep link
     result = await _tg_request(bot.bot_token, "sendMessage", {
         "chat_id": int(channel_id),
         "text": f"{caption}\n\n{deep_link}",
@@ -505,18 +589,35 @@ async def _post_to_channel(
 # ── Job tracking endpoints ───────────────────────────────────
 
 @router.get("/jobs")
-async def list_jobs():
-    """List all publish jobs (newest first)."""
-    return sorted(_publish_jobs.values(), key=lambda j: j["id"], reverse=True)
+async def list_jobs(db: AsyncSession = Depends(get_db)):
+    """List all publish jobs (newest first). Persisted in DB."""
+    result = await db.execute(
+        select(PublishJob).order_by(PublishJob.created_at.desc()).limit(50)
+    )
+    jobs = result.scalars().all()
+    return [j.to_dict() for j in jobs]
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(job_id: str):
+async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     """Get a specific publish job's status and results."""
-    job = _publish_jobs.get(job_id)
+    job = await db.get(PublishJob, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    return job
+    return job.to_dict()
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a completed/failed job from history."""
+    job = await db.get(PublishJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.status == "processing":
+        raise HTTPException(400, "Cannot delete a running job")
+    await db.execute(delete(PublishJob).where(PublishJob.id == job_id))
+    await db.commit()
+    return {"deleted": True}
 
 
 # ── Content listing (enriched with tokens & stats) ──────────
@@ -531,12 +632,10 @@ async def list_content(
     cs = ContentService(db)
     packs = await cs.list_packs(limit=limit, offset=skip)
 
-    # Batch-fetch first token per pack for deep-link construction
     pack_ids = [p.id for p in packs]
     if not pack_ids:
         return []
 
-    # Get one token per pack (newest)
     subq = (
         select(
             Token.pack_id,
@@ -558,7 +657,6 @@ async def list_content(
         row.pack_id: (row.token, row.used_count) for row in token_rows.all()
     }
 
-    # Get active bots (for constructing deep links)
     bot_svc = BotService(db)
     bots = await bot_svc.list_active()
     default_bot_username = bots[0].bot_username if bots else None
@@ -589,7 +687,7 @@ async def list_content(
     return enriched
 
 
-# ── Re-publish (post existing pack to channel again) ────────
+# ── Re-publish ───────────────────────────────────────────────
 
 class RepublishRequest(BaseModel):
     bot_id: int
@@ -613,7 +711,6 @@ async def republish_pack(
     if not bot:
         raise HTTPException(404, "Bot not found")
 
-    # Get or create token
     result = await db.execute(
         select(Token).where(Token.pack_id == pack_id).order_by(Token.created_at.desc()).limit(1)
     )
@@ -624,8 +721,6 @@ async def republish_pack(
         await db.commit()
 
     deep_link = f"https://t.me/{bot.bot_username}?start={token.token}"
-
-    # Use saved thumbnail from pack if none provided in request
     thumb = body.thumbnail_file_id or pack.thumbnail_file_id
 
     posted = await _post_to_channel(

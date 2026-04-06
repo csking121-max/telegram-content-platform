@@ -563,3 +563,20 @@ export const republishContent = (packId: number, botId: number, thumbnailFileId?
     thumbnail_file_id: thumbnailFileId || null,
   }).then((r) => r.data);
 
+/* ── Default Thumbnails ────────────────────────────────── */
+
+export const getDefaultThumbnails = () =>
+  apiClient.get<Array<{ id: number; name: string; file_id: string }>>("/admin/content-factory/default-thumbnails").then((r) => r.data);
+
+export const createDefaultThumbnail = (name: string, file_id: string) =>
+  apiClient.post("/admin/content-factory/default-thumbnails", { name, file_id }).then((r) => r.data);
+
+export const renameDefaultThumbnail = (id: number, name: string) =>
+  apiClient.patch(`/admin/content-factory/default-thumbnails/${id}`, { name }).then((r) => r.data);
+
+export const deleteDefaultThumbnail = (id: number) =>
+  apiClient.delete(`/admin/content-factory/default-thumbnails/${id}`).then((r) => r.data);
+
+export const deletePublishJob = (jobId: string) =>
+  apiClient.delete(`/admin/content-factory/jobs/${jobId}`).then((r) => r.data);
+

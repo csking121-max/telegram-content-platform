@@ -237,6 +237,7 @@ export interface PublishJob {
   results: PublishResult[];
   error?: string;
   rate_per_minute: number;
+  created_at?: string;
 }
 
 export interface PublishResult {
@@ -264,4 +265,10 @@ export interface ContentItem {
   token: string | null;
   deep_link: string | null;
   views: number;
+}
+
+export interface DefaultThumbnail {
+  id: number;
+  name: string;
+  file_id: string;
 }

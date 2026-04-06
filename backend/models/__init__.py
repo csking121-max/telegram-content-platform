@@ -24,6 +24,8 @@ from backend.models.bot_message import BotMessage
 from backend.models.user_streak import UserStreak
 from backend.models.streak_milestone import StreakMilestone
 from backend.models.streak_level import StreakLevel
+from backend.models.default_thumbnail import DefaultThumbnail
+from backend.models.publish_job import PublishJob
 
 __all__ = [
     "User",
@@ -49,4 +51,6 @@ __all__ = [
     "UserStreak",
     "StreakMilestone",
     "StreakLevel",
+    "DefaultThumbnail",
+    "PublishJob",
 ]
