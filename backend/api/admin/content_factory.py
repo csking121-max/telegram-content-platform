@@ -48,7 +48,11 @@ async def _get_first_active_bot(db: AsyncSession):
 
 
 async def _get_storage_group_id(db: AsyncSession) -> int:
-    """Get storage_group_id from platform settings."""
+    """Get storage_group_id from platform settings.
+    
+    Telegram group/channel chat IDs are negative (prefixed with -100).
+    Auto-fix if someone stores only the numeric part without the minus sign.
+    """
     svc = PlatformSettingsService(db)
     val = await svc.get("storage_group_id")
     if not val:
@@ -56,7 +60,11 @@ async def _get_storage_group_id(db: AsyncSession) -> int:
             503,
             "storage_group_id not configured. Set it in Settings → Content.",
         )
-    return int(val)
+    chat_id = int(val)
+    # Auto-fix: if positive and looks like a supergroup/channel ID, prepend -100
+    if chat_id > 0 and len(str(chat_id)) >= 10:
+        chat_id = int(f"-100{chat_id}")
+    return chat_id
 
 
 async def _tg_upload_file(
@@ -136,20 +144,28 @@ async def upload_file(
     bot = await _get_first_active_bot(db)
     storage_group_id = await _get_storage_group_id(db)
 
+    # Telegram Bot API limit: 50 MB for cloud API, 2 GB for local bot API server
     file_bytes = await file.read()
-    if len(file_bytes) > 50 * 1024 * 1024:
-        raise HTTPException(413, "File must be under 50 MB")
+    size_mb = len(file_bytes) / (1024 * 1024)
+    if size_mb > 2048:
+        raise HTTPException(413, "File must be under 2 GB")
+    if size_mb > 50:
+        logger.info("Large file %.1f MB — will attempt upload (may need Local Bot API)", size_mb)
 
     tg_method, field_name = _tg_method_for_type(media_type)
     extra_data: dict = {}
     if media_type == "video":
         extra_data["supports_streaming"] = "true"
 
+    # Scale timeout with file size: ~60s per 50MB, minimum 120s
+    upload_timeout = max(120, int(size_mb / 50 * 60) + 60)
+
     result = await _tg_upload_file(
         bot.bot_token,
         tg_method,
         data={"chat_id": str(storage_group_id), **extra_data},
         files={field_name: (file.filename or "file", file_bytes, ct)},
+        timeout=upload_timeout,
     )
 
     if not result or not result.get("ok"):

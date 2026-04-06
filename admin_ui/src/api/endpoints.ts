@@ -497,7 +497,7 @@ export const uploadVideo = (file: File, onProgress?: (pct: number) => void) =>
   apiClient
     .post("/admin/content-factory/upload", (() => { const fd = new FormData(); fd.append("file", file); return fd; })(), {
       headers: { "Content-Type": undefined },
-      timeout: 120_000,
+      timeout: 600_000,
       onUploadProgress: (e) => {
         if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
       },

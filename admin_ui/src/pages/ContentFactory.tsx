@@ -356,16 +356,16 @@ export default function ContentFactory() {
           onClick={() => fileRef.current?.click()}
         >
           <p style={{ fontSize: 16, margin: 0 }}>
-            {dragging ? "Drop videos here…" : "📁 Drag & drop videos here, or click to browse"}
+            {dragging ? "Drop files here…" : "📁 Drag & drop files here, or click to browse"}
           </p>
           <p style={{ fontSize: 12, color: "#888", margin: "8px 0 0" }}>
-            Supports MP4, MKV, AVI, MOV — max 50 MB per file
+            Videos, images, documents — up to 2 GB per file
           </p>
         </div>
         <input
           ref={fileRef}
           type="file"
-          accept="video/*"
+          accept="*/*"
           multiple
           style={{ display: "none" }}
           onChange={onFileInput}
