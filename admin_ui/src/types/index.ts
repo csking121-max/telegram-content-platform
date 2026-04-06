@@ -198,3 +198,70 @@ export interface PlatformSetting {
   created_at: string | null;
   updated_at: string | null;
 }
+
+/* ── Content Factory ───────────────────────────────────── */
+
+export interface UploadedVideo {
+  id: string;
+  filename: string;
+  storage_chat_id: number;
+  storage_message_id: number;
+  file_id: string;
+  media_type: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  title: string;
+  access_type: string;
+  credit_cost: number;
+  credit_mode: string;
+  credit_per_item: number;
+  bot_id: number;
+  thumbnail_file_id?: string;
+  uploading: boolean;
+  error?: string;
+}
+
+export interface ContentCategory {
+  tag: string;
+  label: string;
+}
+
+export interface PublishJob {
+  id: string;
+  status: string;
+  mode: string;
+  total: number;
+  completed: number;
+  failed: number;
+  results: PublishResult[];
+  error?: string;
+  rate_per_minute: number;
+}
+
+export interface PublishResult {
+  pack_id?: number;
+  token?: string;
+  deep_link?: string;
+  items_count?: number;
+  channel_posted?: boolean;
+  title?: string;
+  error?: string;
+  index?: number;
+}
+
+export interface ContentItem {
+  id: number;
+  title: string;
+  description: string | null;
+  access_type: string;
+  credit_cost: number;
+  credit_mode: string;
+  credit_per_item: number;
+  deletion_seconds: number | null;
+  created_at: string;
+  item_count: number;
+  token: string | null;
+  deep_link: string | null;
+  views: number;
+}

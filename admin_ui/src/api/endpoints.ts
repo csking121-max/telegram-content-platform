@@ -17,6 +17,9 @@ import type {
   Token,
   UpiConfig,
   User,
+  ContentCategory,
+  ContentItem,
+  PublishJob,
 } from "../types";
 
 /* ── Auth ──────────────────────────────────────────────────── */
@@ -487,4 +490,76 @@ export const retryDlqItems = (queue: string, count = 1) =>
 
 export const purgeDlq = (queue: string) =>
   apiClient.delete("/admin/dlq/purge", { params: { queue } }).then((r) => r.data);
+
+/* ── Content Factory ───────────────────────────────────── */
+
+export const uploadVideo = (file: File, onProgress?: (pct: number) => void) =>
+  apiClient
+    .post("/admin/content-factory/upload", (() => { const fd = new FormData(); fd.append("file", file); return fd; })(), {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 120_000,
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
+      },
+    })
+    .then((r) => r.data);
+
+export const uploadThumbnail = (file: File) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return apiClient
+    .post("/admin/content-factory/upload-thumbnail", fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 60_000,
+    })
+    .then((r) => r.data);
+};
+
+export const getFactoryCategories = () =>
+  apiClient.get<ContentCategory[]>("/admin/content-factory/categories").then((r) => r.data);
+
+export const getActiveBots = () =>
+  apiClient.get<Bot[]>("/admin/bots/active").then((r) => r.data);
+
+export const publishContent = (body: {
+  mode: string;
+  items: Array<{
+    storage_chat_id: number;
+    storage_message_id: number;
+    media_type: string;
+    title: string;
+    access_type: string;
+    credit_cost: number;
+    credit_mode: string;
+    credit_per_item: number;
+    bot_id: number;
+    thumbnail_file_id?: string | null;
+  }>;
+  group_settings?: {
+    title: string;
+    access_type: string;
+    credit_cost: number;
+    credit_mode: string;
+    credit_per_item: number;
+    bot_id: number;
+    thumbnail_file_id?: string | null;
+  } | null;
+  rate_per_minute: number;
+  deletion_seconds?: number | null;
+}) => apiClient.post("/admin/content-factory/publish", body).then((r) => r.data);
+
+export const getPublishJobs = () =>
+  apiClient.get<PublishJob[]>("/admin/content-factory/jobs").then((r) => r.data);
+
+export const getPublishJob = (jobId: string) =>
+  apiClient.get<PublishJob>(`/admin/content-factory/jobs/${jobId}`).then((r) => r.data);
+
+export const getFactoryContent = (skip = 0, limit = 50) =>
+  apiClient.get<ContentItem[]>("/admin/content-factory/content", { params: { skip, limit } }).then((r) => r.data);
+
+export const republishContent = (packId: number, botId: number, thumbnailFileId?: string | null) =>
+  apiClient.post(`/admin/content-factory/republish/${packId}`, {
+    bot_id: botId,
+    thumbnail_file_id: thumbnailFileId || null,
+  }).then((r) => r.data);
 

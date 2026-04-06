@@ -9,6 +9,7 @@ from backend.security.auth import require_admin
 from . import (
     analytics,
     bots,
+    content_factory,
     content_packs,
     credits,
     dlq,
@@ -49,3 +50,4 @@ router.include_router(credit_packages.router, prefix="/credit-packages", tags=["
 router.include_router(streaks.router, prefix="/streaks", tags=["admin-streaks"])
 router.include_router(dlq.router, prefix="/dlq", tags=["admin-dlq"])
 router.include_router(notifications.router, prefix="/notifications", tags=["admin-notifications"])
+router.include_router(content_factory.router, prefix="/content-factory", tags=["admin-content-factory"])

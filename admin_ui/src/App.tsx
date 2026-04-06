@@ -21,6 +21,8 @@ import CreditPackages from "./pages/CreditPackages";
 import Streaks from "./pages/Streaks";
 import DeadLetterQueue from "./pages/DeadLetterQueue";
 import WelcomeMessageBuilder from "./pages/WelcomeMessageBuilder";
+import ContentFactory from "./pages/ContentFactory";
+import ContentManager from "./pages/ContentManager";
 
 export default function App() {
   return (
@@ -50,6 +52,8 @@ export default function App() {
           <Route path="/streaks" element={<Streaks />} />
           <Route path="/dlq" element={<DeadLetterQueue />} />
           <Route path="/welcome-builder" element={<WelcomeMessageBuilder />} />
+          <Route path="/content-factory" element={<ContentFactory />} />
+          <Route path="/content-manager" element={<ContentManager />} />
         </Route>
       </Route>
     </Routes>
