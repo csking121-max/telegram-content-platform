@@ -1,7 +1,7 @@
 """
 Admin Content Factory — bulk upload & publish pipeline.
 
-Endpoints for uploading videos to Telegram Storage Group
+Endpoints for uploading files to Telegram Storage Group
 and publishing them as content packs with deep links.
 """
 from __future__ import annotations
@@ -97,50 +97,94 @@ async def _tg_request(token: str, method: str, payload: dict) -> dict | None:
     return None
 
 
+# ── Upload helpers ────────────────────────────────────────────
+
+def _detect_media_type(content_type: str) -> str:
+    """Map MIME content_type to Telegram media category."""
+    ct = content_type.lower()
+    if ct.startswith("video/"):
+        return "video"
+    if ct.startswith("image/gif"):
+        return "animation"
+    if ct.startswith("image/"):
+        return "photo"
+    # Everything else (pdf, zip, etc.) → document
+    return "document"
+
+
+def _tg_method_for_type(media_type: str) -> tuple[str, str]:
+    """Return (Telegram API method, multipart field name) for media_type."""
+    return {
+        "video": ("sendVideo", "video"),
+        "photo": ("sendPhoto", "photo"),
+        "animation": ("sendAnimation", "animation"),
+        "document": ("sendDocument", "document"),
+    }.get(media_type, ("sendDocument", "document"))
+
+
 # ── Upload endpoints ─────────────────────────────────────────
 
 @router.post("/upload")
-async def upload_video(
+async def upload_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a video to the Telegram Storage Group. Returns storage metadata."""
-    ct = file.content_type or ""
-    if not ct.startswith("video/"):
-        raise HTTPException(400, f"Only video files accepted (got {ct})")
+    """Upload any file to the Telegram Storage Group. Returns storage metadata."""
+    ct = file.content_type or "application/octet-stream"
+    media_type = _detect_media_type(ct)
 
     bot = await _get_first_active_bot(db)
     storage_group_id = await _get_storage_group_id(db)
 
-    video_bytes = await file.read()
-    if len(video_bytes) > 50 * 1024 * 1024:
-        raise HTTPException(413, "Video file must be under 50 MB")
+    file_bytes = await file.read()
+    if len(file_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(413, "File must be under 50 MB")
+
+    tg_method, field_name = _tg_method_for_type(media_type)
+    extra_data: dict = {}
+    if media_type == "video":
+        extra_data["supports_streaming"] = "true"
 
     result = await _tg_upload_file(
         bot.bot_token,
-        "sendVideo",
-        data={"chat_id": str(storage_group_id), "supports_streaming": "true"},
-        files={"video": (file.filename or "video.mp4", video_bytes, ct)},
+        tg_method,
+        data={"chat_id": str(storage_group_id), **extra_data},
+        files={field_name: (file.filename or "file", file_bytes, ct)},
     )
 
     if not result or not result.get("ok"):
-        detail = "Failed to upload video to Telegram storage group"
+        detail = "Failed to upload file to Telegram storage group"
         if result and result.get("description"):
             detail += f": {result['description']}"
         raise HTTPException(502, detail)
 
     msg = result["result"]
-    video_info = msg.get("video") or {}
+
+    # Extract file_id from the relevant message field
+    file_id = ""
+    info: dict = {}
+    if media_type == "video":
+        info = msg.get("video") or {}
+        file_id = info.get("file_id", "")
+    elif media_type == "photo":
+        photos = msg.get("photo") or []
+        file_id = photos[-1]["file_id"] if photos else ""
+    elif media_type == "animation":
+        info = msg.get("animation") or {}
+        file_id = info.get("file_id", "")
+    else:  # document
+        info = msg.get("document") or {}
+        file_id = info.get("file_id", "")
 
     return {
         "storage_chat_id": storage_group_id,
         "storage_message_id": msg["message_id"],
-        "file_id": video_info.get("file_id", ""),
+        "file_id": file_id,
         "filename": file.filename,
-        "media_type": "video",
-        "duration": video_info.get("duration"),
-        "width": video_info.get("width"),
-        "height": video_info.get("height"),
+        "media_type": media_type,
+        "duration": info.get("duration"),
+        "width": info.get("width"),
+        "height": info.get("height"),
     }
 
 

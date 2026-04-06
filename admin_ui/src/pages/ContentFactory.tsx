@@ -153,14 +153,20 @@ export default function ContentFactory() {
       const newVideos: UploadedVideo[] = [];
 
       for (const file of Array.from(files)) {
-        if (!file.type.startsWith("video/")) continue;
+        const mt = file.type.startsWith("video/")
+          ? "video"
+          : file.type === "image/gif"
+            ? "animation"
+            : file.type.startsWith("image/")
+              ? "photo"
+              : "document";
         const v: UploadedVideo = {
           id: uid(),
           filename: file.name,
           storage_chat_id: 0,
           storage_message_id: 0,
           file_id: "",
-          media_type: "video",
+          media_type: mt,
           title: file.name.replace(/\.[^.]+$/, ""),
           access_type: "free",
           credit_cost: 0,
@@ -174,8 +180,8 @@ export default function ContentFactory() {
 
       setVideos((prev) => [...prev, ...newVideos]);
 
-      // Upload each video sequentially to avoid overwhelming Telegram
-      const fileArr = Array.from(files).filter((f) => f.type.startsWith("video/"));
+      // Upload each file sequentially to avoid overwhelming Telegram
+      const fileArr = Array.from(files);
       for (let i = 0; i < fileArr.length; i++) {
         const v = newVideos[i];
         try {
@@ -197,7 +203,13 @@ export default function ContentFactory() {
             ),
           );
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : "Upload failed";
+          let msg = "Upload failed";
+          if (err && typeof err === "object" && "response" in err) {
+            const resp = (err as { response?: { data?: { detail?: string }; status?: number } }).response;
+            msg = resp?.data?.detail || `Upload failed (HTTP ${resp?.status})`;
+          } else if (err instanceof Error) {
+            msg = err.message;
+          }
           setVideos((prev) =>
             prev.map((x) =>
               x.id === v.id ? { ...x, uploading: false, error: msg } : x,
@@ -330,7 +342,7 @@ export default function ContentFactory() {
     <>
       <h1 style={{ marginBottom: 8 }}>🏭 Content Factory</h1>
       <p style={{ color: "#666", marginTop: 0, marginBottom: 20 }}>
-        Upload, configure, and bulk-publish video content to Telegram.
+        Upload, configure, and bulk-publish content to Telegram.
       </p>
 
       {/* ── Upload Zone ── */}
@@ -493,7 +505,7 @@ export default function ContentFactory() {
         <div style={{ ...card, overflowX: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <h3 style={{ margin: 0 }}>
-              Videos ({readyVideos.length} ready / {videos.length} total)
+              Files ({readyVideos.length} ready / {videos.length} total)
             </h3>
             {mode === "solo" && readyVideos.length > 1 && (
               <div style={{ display: "flex", gap: 8 }}>
@@ -635,9 +647,15 @@ export default function ContentFactory() {
                   {/* Status */}
                   <td style={tdStyle}>
                     {v.uploading && <span style={{ color: "#f39c12" }}>⏳ Uploading…</span>}
-                    {v.error && <span style={{ color: "#e74c3c" }} title={v.error}>❌ Failed</span>}
+                    {v.error && (
+                      <span style={{ color: "#e74c3c", cursor: "help" }} title={v.error}>
+                        ❌ {v.error.length > 30 ? v.error.slice(0, 30) + "…" : v.error}
+                      </span>
+                    )}
                     {!v.uploading && !v.error && v.storage_message_id > 0 && (
-                      <span style={{ color: "#2ecc71" }}>✅ Ready</span>
+                      <span style={{ color: "#2ecc71" }}>
+                        ✅ {v.media_type === "video" ? "🎬" : v.media_type === "photo" ? "🖼️" : v.media_type === "animation" ? "🎞️" : "📄"} Ready
+                      </span>
                     )}
                   </td>
 
@@ -658,7 +676,7 @@ export default function ContentFactory() {
       {readyVideos.length > 0 && !publishing && !activeJob && (
         <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontWeight: 600 }}>
-            {readyVideos.length} video{readyVideos.length > 1 ? "s" : ""} ready to publish
+            {readyVideos.length} file{readyVideos.length > 1 ? "s" : ""} ready to publish
             {mode === "group" ? " (as 1 group pack)" : ` (as ${readyVideos.length} solo packs)`}
           </span>
           <button onClick={handlePublish} style={{ ...btnSuccess, padding: "10px 28px", fontSize: 16 }}>
