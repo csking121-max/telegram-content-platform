@@ -105,6 +105,27 @@ async def _tg_request(token: str, method: str, payload: dict) -> dict | None:
     return None
 
 
+async def _tg_download_file(token: str, file_id: str) -> bytes | None:
+    """Download a file from Telegram using getFile + file download."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{TELEGRAM_API}/bot{token}/getFile",
+                json={"file_id": file_id},
+            )
+            if resp.status_code != 200:
+                return None
+            file_path = resp.json().get("result", {}).get("file_path")
+            if not file_path:
+                return None
+            dl = await client.get(f"{TELEGRAM_API}/file/bot{token}/{file_path}")
+            if dl.status_code == 200:
+                return dl.content
+    except Exception as e:
+        logger.warning("TG download file failed: %s", e)
+    return None
+
+
 # ── Upload helpers ────────────────────────────────────────────
 
 def _detect_media_type(content_type: str) -> str:
@@ -569,6 +590,7 @@ async def _post_to_channel(
     }
 
     if thumbnail_file_id:
+        # Try sending with file_id directly (works if same bot uploaded it)
         result = await _tg_request(bot.bot_token, "sendPhoto", {
             "chat_id": int(channel_id),
             "photo": thumbnail_file_id,
@@ -577,6 +599,25 @@ async def _post_to_channel(
         })
         if result:
             return True
+
+        # file_id failed — thumbnail was uploaded via a different bot.
+        # Download via the upload bot and re-upload through the channel bot.
+        upload_bot = await _get_first_active_bot(db)
+        if upload_bot.bot_token != bot.bot_token:
+            img_bytes = await _tg_download_file(upload_bot.bot_token, thumbnail_file_id)
+            if img_bytes:
+                reup = await _tg_upload_file(
+                    bot.bot_token,
+                    "sendPhoto",
+                    data={
+                        "chat_id": str(int(channel_id)),
+                        "caption": caption,
+                        "reply_markup": json.dumps(reply_markup),
+                    },
+                    files={"photo": ("thumb.jpg", img_bytes, "image/jpeg")},
+                )
+                if reup and reup.get("ok"):
+                    return True
 
     result = await _tg_request(bot.bot_token, "sendMessage", {
         "chat_id": int(channel_id),
