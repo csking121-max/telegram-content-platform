@@ -340,6 +340,7 @@ async def _publish_group(job: dict, body: PublishRequest):
             credit_mode=gs.credit_mode,
             credit_per_item=gs.credit_per_item,
             deletion_seconds=body.deletion_seconds,
+            thumbnail_file_id=gs.thumbnail_file_id,
         ))
         await db.flush()
 
@@ -395,6 +396,7 @@ async def _publish_solo(job: dict, body: PublishRequest, delay: float):
                     credit_mode=item.credit_mode,
                     credit_per_item=item.credit_per_item,
                     deletion_seconds=body.deletion_seconds,
+                    thumbnail_file_id=item.thumbnail_file_id,
                 ))
                 await db.flush()
 
@@ -607,9 +609,12 @@ async def republish_pack(
 
     deep_link = f"https://t.me/{bot.bot_username}?start={token.token}"
 
+    # Use saved thumbnail from pack if none provided in request
+    thumb = body.thumbnail_file_id or pack.thumbnail_file_id
+
     posted = await _post_to_channel(
         db, bot, pack.title, pack.access_type, pack.credit_cost,
-        len(pack.items), deep_link, body.thumbnail_file_id,
+        len(pack.items), deep_link, thumb,
     )
 
     return {

@@ -155,11 +155,23 @@ export default function ContentManager() {
   };
 
   const copyLink = (item: ContentItem) => {
-    if (item.deep_link) {
-      navigator.clipboard.writeText(item.deep_link);
-      setCopiedToken(item.token || "");
-      setTimeout(() => setCopiedToken(""), 2000);
+    if (!item.deep_link) return;
+    const text = item.deep_link;
+    // navigator.clipboard requires HTTPS; use fallback for HTTP
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
     }
+    setCopiedToken(item.token || "");
+    setTimeout(() => setCopiedToken(""), 2000);
   };
 
   const accessBadge = (type: string) => {

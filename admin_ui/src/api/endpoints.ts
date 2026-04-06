@@ -496,6 +496,7 @@ export const purgeDlq = (queue: string) =>
 export const uploadVideo = (file: File, onProgress?: (pct: number) => void) =>
   apiClient
     .post("/admin/content-factory/upload", (() => { const fd = new FormData(); fd.append("file", file); return fd; })(), {
+      headers: { "Content-Type": undefined },
       timeout: 120_000,
       onUploadProgress: (e) => {
         if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
@@ -508,6 +509,7 @@ export const uploadThumbnail = (file: File) => {
   fd.append("file", file);
   return apiClient
     .post("/admin/content-factory/upload-thumbnail", fd, {
+      headers: { "Content-Type": undefined },
       timeout: 60_000,
     })
     .then((r) => r.data);

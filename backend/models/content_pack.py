@@ -24,6 +24,7 @@ class ContentPack(Base):
     )  # per_pack | per_item
     credit_per_item: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     deletion_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    thumbnail_file_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # ── Relationships ────────────────────────────────
@@ -35,7 +36,8 @@ class ContentPack(Base):
         cascade="all, delete-orphan",
     )
     tokens: Mapped[List["Token"]] = relationship(  # noqa: F821
-        "Token", back_populates="content_pack", lazy="dynamic",
+        "Token", back_populates="content_pack",
+        lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True,
     )
 
     __table_args__ = (

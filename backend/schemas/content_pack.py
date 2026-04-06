@@ -16,6 +16,7 @@ class ContentPackCreate(BaseModel):
     credit_mode: str = "per_item"  # per_pack | per_item
     credit_per_item: int = 1
     deletion_seconds: Optional[int] = None
+    thumbnail_file_id: Optional[str] = None
 
 
 class ContentPackRead(BaseModel):
@@ -40,6 +41,7 @@ class ContentPackUpdate(BaseModel):
     credit_mode: Optional[str] = None
     credit_per_item: Optional[int] = None
     deletion_seconds: Optional[int] = None
+    thumbnail_file_id: Optional[str] = None
 
 
 class ContentPackWithItems(ContentPackRead):
