@@ -439,20 +439,23 @@ export default function ContentFactory() {
     onUpload: (file: File) => void;
   }) => (
     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-      {defaultThumbs.length > 0 && (
-        <select
-          value={value && defaultThumbs.some((t) => t.file_id === value) ? value : ""}
-          onChange={(e) => onChange(e.target.value)}
-          style={{ ...select_, width: 110, fontSize: 11 }}
-        >
-          <option value="">Select…</option>
-          {defaultThumbs.map((t) => (
-            <option key={t.id} value={t.file_id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      )}
+      <select
+        value={value && defaultThumbs.some((t) => t.file_id === value) ? value : "_custom"}
+        onChange={(e) => {
+          if (e.target.value === "_custom") return; // handled by file input
+          if (e.target.value === "_none") { onChange(""); return; }
+          onChange(e.target.value);
+        }}
+        style={{ ...select_, width: 120, fontSize: 11 }}
+      >
+        <option value="_none">— None —</option>
+        {defaultThumbs.map((t) => (
+          <option key={t.id} value={t.file_id}>
+            🖼️ {t.name}
+          </option>
+        ))}
+        <option value="_custom">📁 Custom upload…</option>
+      </select>
       {value ? (
         <span style={{ color: "#2ecc71", fontSize: 12 }}>
           ✅{" "}
@@ -473,7 +476,7 @@ export default function ContentFactory() {
             display: "inline-block",
           }}
         >
-          Custom
+          Upload
           <input
             type="file"
             accept="image/*"
@@ -500,59 +503,195 @@ export default function ContentFactory() {
         Upload, configure, and bulk-publish content to Telegram.
       </p>
 
-      {/* ── Active Jobs (always visible if any are running) ── */}
-      {activeJobs.length > 0 && (
-        <div style={card}>
-          <h3 style={{ margin: "0 0 12px" }}>
-            ⏳ Active Jobs ({activeJobs.length})
-          </h3>
-          {activeJobs.map((job) => (
-            <div
-              key={job.id}
-              style={{
-                padding: 12,
-                marginBottom: 8,
-                background: "#f8f9fa",
-                borderRadius: 6,
-                border: "1px solid #e0e0e0",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>
-                  Job #{job.id} — {job.mode.toUpperCase()} — {job.rate_per_minute > 0 ? `${job.rate_per_minute}/min` : "All at once"}
-                </span>
-                <span style={{ fontSize: 12, color: "#888" }}>
-                  {job.status === "processing" ? "🔄 Processing…" : "⏳ Queued"}
-                </span>
-              </div>
-              <div style={{ background: "#eee", borderRadius: 6, height: 20, overflow: "hidden" }}>
-                <div
-                  style={{
-                    height: "100%",
-                    borderRadius: 6,
-                    background: job.failed > 0 ? "#f39c12" : "#2ecc71",
-                    width: `${Math.round(((job.completed + job.failed) / Math.max(job.total, 1)) * 100)}%`,
-                    transition: "width .3s",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: "#fff",
-                  }}
-                >
-                  {job.completed + job.failed} / {job.total}
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 16, fontSize: 12, marginTop: 6, color: "#666" }}>
-                <span>✅ {job.completed}</span>
-                <span>❌ {job.failed}</span>
-                <span>📊 {job.total} total</span>
+      {/* ── Publish Jobs (always visible) ── */}
+      <div style={card}>
+        <h3 style={{ margin: "0 0 12px" }}>
+          📊 Publish Jobs
+          {activeJobs.length > 0 && <span style={{ color: "#f39c12", marginLeft: 8 }}>({activeJobs.length} running)</span>}
+        </h3>
+
+        {jobs.length === 0 && (
+          <p style={{ color: "#aaa", margin: 0, fontSize: 13 }}>No publish jobs yet. Upload files below and publish to start a job.</p>
+        )}
+
+        {activeJobs.map((job) => (
+          <div
+            key={job.id}
+            style={{
+              padding: 12,
+              marginBottom: 8,
+              background: "#fffbea",
+              borderRadius: 6,
+              border: "1px solid #fce588",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>
+                🔄 Job #{job.id} — {job.mode.toUpperCase()} — {job.rate_per_minute > 0 ? `${job.rate_per_minute}/min` : "⚡ All at once"}
+              </span>
+              <span style={{ fontSize: 12, color: "#b8860b", fontWeight: 600 }}>
+                {job.status === "processing" ? "Processing…" : "Queued"}
+              </span>
+            </div>
+            <div style={{ background: "#eee", borderRadius: 6, height: 22, overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  borderRadius: 6,
+                  background: job.failed > 0 ? "#f39c12" : "#2ecc71",
+                  width: `${Math.round(((job.completed + job.failed) / Math.max(job.total, 1)) * 100)}%`,
+                  transition: "width .3s",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "#fff",
+                  minWidth: 40,
+                }}
+              >
+                {job.completed + job.failed} / {job.total}
               </div>
             </div>
-          ))}
+            <div style={{ display: "flex", gap: 16, fontSize: 12, marginTop: 6, color: "#666" }}>
+              <span>✅ {job.completed} done</span>
+              <span>❌ {job.failed} failed</span>
+              <span>📦 {job.total} total</span>
+            </div>
+          </div>
+        ))}
+
+        {doneJobs.map((job) => (
+          <div
+            key={job.id}
+            style={{
+              padding: 12,
+              marginBottom: 8,
+              background: job.status === "completed" ? "#f0fff4" : "#fff5f5",
+              borderRadius: 6,
+              border: `1px solid ${job.status === "completed" ? "#c3e6cb" : "#f5c6cb"}`,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>
+                {job.status === "completed" ? "✅" : "❌"} Job #{job.id} — {job.mode.toUpperCase()}
+                {" — "}{job.rate_per_minute > 0 ? `${job.rate_per_minute}/min` : "All at once"}
+              </span>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: "#888" }}>
+                  {job.completed} completed, {job.failed} failed / {job.total} total
+                </span>
+                <button
+                  onClick={() => handleDeleteJob(job.id)}
+                  style={{ ...btn, padding: "2px 8px", fontSize: 11, background: "#eee" }}
+                >
+                  🗑️
+                </button>
+              </div>
+            </div>
+
+            {job.error && (
+              <p style={{ color: "#e74c3c", fontSize: 12, margin: "0 0 8px" }}>Error: {job.error}</p>
+            )}
+
+            {job.results.length > 0 && (
+              <details style={{ marginTop: 4 }}>
+                <summary style={{ cursor: "pointer", fontSize: 12, color: "#555" }}>
+                  Show {job.results.length} result{job.results.length > 1 ? "s" : ""}
+                </summary>
+                <div style={{ maxHeight: 200, overflowY: "auto", marginTop: 4 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...thStyle, fontSize: 11 }}>Title</th>
+                        <th style={{ ...thStyle, fontSize: 11 }}>Pack ID</th>
+                        <th style={{ ...thStyle, fontSize: 11 }}>Deep Link</th>
+                        <th style={{ ...thStyle, fontSize: 11 }}>Channel</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {job.results.map((r, i) => (
+                        <tr key={i}>
+                          <td style={tdStyle}>{r.title || r.error || "—"}</td>
+                          <td style={tdStyle}>{r.pack_id ?? "—"}</td>
+                          <td style={tdStyle}>
+                            {r.deep_link ? (
+                              <button
+                                onClick={() => {
+                                  try { navigator.clipboard.writeText(r.deep_link!); } catch { /* fallback */ }
+                                }}
+                                style={{ ...btn, padding: "2px 8px", fontSize: 11, background: "#eee" }}
+                                title={r.deep_link}
+                              >
+                                📋 Copy
+                              </button>
+                            ) : (
+                              <span style={{ color: "#e74c3c" }}>{r.error || "—"}</span>
+                            )}
+                          </td>
+                          <td style={tdStyle}>
+                            {r.channel_posted ? (
+                              <span style={{ color: "#2ecc71" }}>✅</span>
+                            ) : r.error ? (
+                              <span style={{ color: "#e74c3c" }}>❌</span>
+                            ) : (
+                              <span style={{ color: "#f39c12" }}>⚠️</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Publish Settings (always visible) ── */}
+      <div style={card}>
+        <h3 style={{ margin: "0 0 12px" }}>⚙️ Publish Settings</h3>
+        <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Publish Rate</label>
+            <select
+              value={ratePerMinute}
+              onChange={(e) => setRatePerMinute(Number(e.target.value))}
+              style={{ ...select_, width: 200 }}
+            >
+              <option value={0}>⚡ Send all at once</option>
+              <option value={1}>1 per minute</option>
+              <option value={2}>2 per minute</option>
+              <option value={3}>3 per minute</option>
+              <option value={5}>5 per minute</option>
+              <option value={10}>10 per minute</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Auto-Delete (sec)</label>
+            <input
+              type="number"
+              min={0}
+              value={deletionSeconds}
+              onChange={(e) => setDeletionSeconds(Number(e.target.value))}
+              style={{ ...input, width: 100 }}
+              placeholder="0 = never"
+            />
+          </div>
+          <div>
+            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Mode</label>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as "solo" | "group")}
+              style={{ ...select_, width: 260 }}
+            >
+              <option value="solo">Solo — Each file gets its own deep link</option>
+              <option value="group">Group — All files share one deep link</option>
+            </select>
+          </div>
         </div>
-      )}
+      </div>
 
       {/* ── Default Thumbnails Manager ── */}
       <div style={card}>
@@ -685,116 +824,63 @@ export default function ContentFactory() {
         />
       </div>
 
-      {/* ── Mode & Settings ── */}
-      {videos.length > 0 && (
+      {/* ── Group Mode Settings (shown when group mode selected and files uploaded) ── */}
+      {videos.length > 0 && mode === "group" && (
         <div style={card}>
-          <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
-            <div>
-              <label style={{ fontWeight: 600, fontSize: 14 }}>Mode: </label>
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as "solo" | "group")}
-                style={{ ...select_, width: 200 }}
-              >
-                <option value="solo">Solo — Each file gets its own deep link</option>
-                <option value="group">Group — All files share one deep link</option>
+          <h4 style={{ margin: "0 0 12px", color: "#2a5db0" }}>📦 Group Pack Settings</h4>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={{ flex: "1 1 200px" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Title</label>
+              <input value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} style={input} />
+            </div>
+            <div style={{ flex: "0 0 160px" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Category</label>
+              <select value={groupCategory} onChange={(e) => setGroupCategory(e.target.value)} style={select_}>
+                {categories.map((c) => (
+                  <option key={c.tag} value={c.tag}>{c.label}</option>
+                ))}
               </select>
             </div>
-            <div>
-              <label style={{ fontWeight: 600, fontSize: 14 }}>Publish Rate: </label>
-              <select
-                value={ratePerMinute}
-                onChange={(e) => setRatePerMinute(Number(e.target.value))}
-                style={{ ...select_, width: 180 }}
-              >
-                <option value={0}>⚡ Send all at once</option>
-                <option value={1}>1 per minute</option>
-                <option value={2}>2 per minute</option>
-                <option value={3}>3 per minute</option>
-                <option value={5}>5 per minute</option>
-                <option value={10}>10 per minute</option>
+            <div style={{ flex: "0 0 130px" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Credit Mode</label>
+              <select value={groupCreditMode} onChange={(e) => setGroupCreditMode(e.target.value)} style={select_}>
+                <option value="per_item">Per Item</option>
+                <option value="per_pack">Per Pack</option>
               </select>
             </div>
-            <div>
-              <label style={{ fontWeight: 600, fontSize: 14 }}>Auto-Delete (sec): </label>
+            <div style={{ flex: "0 0 100px" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                {groupCreditMode === "per_pack" ? "Pack Cost" : "Cost/Item"}
+              </label>
               <input
                 type="number"
                 min={0}
-                value={deletionSeconds}
-                onChange={(e) => setDeletionSeconds(Number(e.target.value))}
-                style={{ ...input, width: 80 }}
-                placeholder="0 = never"
+                value={groupCreditMode === "per_pack" ? groupCreditCost : groupCreditPerItem}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (groupCreditMode === "per_pack") setGroupCreditCost(v);
+                  else setGroupCreditPerItem(v);
+                }}
+                style={input}
+              />
+            </div>
+            <div style={{ flex: "0 0 160px" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Bot</label>
+              <select value={groupBotId} onChange={(e) => setGroupBotId(Number(e.target.value))} style={select_}>
+                {bots.map((b) => (
+                  <option key={b.id} value={b.id}>@{b.bot_username}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: "0 0 180px" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Thumbnail</label>
+              <ThumbSelector
+                value={groupThumbId}
+                onChange={setGroupThumbId}
+                onUpload={(file) => handleGroupThumb(file)}
               />
             </div>
           </div>
-
-          {/* ── Group Mode Settings ── */}
-          {mode === "group" && (
-            <div
-              style={{
-                marginTop: 16,
-                padding: 16,
-                background: "#f0f7ff",
-                borderRadius: 8,
-                border: "1px solid #c5dcf5",
-              }}
-            >
-              <h4 style={{ margin: "0 0 12px", color: "#2a5db0" }}>📦 Group Pack Settings</h4>
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
-                <div style={{ flex: "1 1 200px" }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Title</label>
-                  <input value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} style={input} />
-                </div>
-                <div style={{ flex: "0 0 160px" }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Category</label>
-                  <select value={groupCategory} onChange={(e) => setGroupCategory(e.target.value)} style={select_}>
-                    {categories.map((c) => (
-                      <option key={c.tag} value={c.tag}>{c.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ flex: "0 0 130px" }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Credit Mode</label>
-                  <select value={groupCreditMode} onChange={(e) => setGroupCreditMode(e.target.value)} style={select_}>
-                    <option value="per_item">Per Item</option>
-                    <option value="per_pack">Per Pack</option>
-                  </select>
-                </div>
-                <div style={{ flex: "0 0 100px" }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
-                    {groupCreditMode === "per_pack" ? "Pack Cost" : "Cost/Item"}
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={groupCreditMode === "per_pack" ? groupCreditCost : groupCreditPerItem}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (groupCreditMode === "per_pack") setGroupCreditCost(v);
-                      else setGroupCreditPerItem(v);
-                    }}
-                    style={input}
-                  />
-                </div>
-                <div style={{ flex: "0 0 160px" }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Bot</label>
-                  <select value={groupBotId} onChange={(e) => setGroupBotId(Number(e.target.value))} style={select_}>
-                    {bots.map((b) => (
-                      <option key={b.id} value={b.id}>@{b.bot_username}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ flex: "0 0 180px" }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Thumbnail</label>
-                  <ThumbSelector
-                    value={groupThumbId}
-                    onChange={setGroupThumbId}
-                    onUpload={(file) => handleGroupThumb(file)}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -976,93 +1062,6 @@ export default function ContentFactory() {
         </div>
       )}
 
-      {/* ── Completed Jobs History ── */}
-      {doneJobs.length > 0 && (
-        <div style={card}>
-          <h3 style={{ margin: "0 0 12px" }}>📋 Job History</h3>
-          {doneJobs.map((job) => (
-            <div
-              key={job.id}
-              style={{
-                padding: 12,
-                marginBottom: 8,
-                background: job.status === "completed" ? "#f0fff4" : "#fff5f5",
-                borderRadius: 6,
-                border: `1px solid ${job.status === "completed" ? "#c3e6cb" : "#f5c6cb"}`,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>
-                  {job.status === "completed" ? "✅" : "❌"} Job #{job.id} — {job.mode.toUpperCase()}
-                  {" — "}{job.rate_per_minute > 0 ? `${job.rate_per_minute}/min` : "All at once"}
-                </span>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: "#888" }}>
-                    {job.completed} completed, {job.failed} failed / {job.total} total
-                  </span>
-                  <button
-                    onClick={() => handleDeleteJob(job.id)}
-                    style={{ ...btn, padding: "2px 8px", fontSize: 11, background: "#eee" }}
-                  >
-                    🗑️
-                  </button>
-                </div>
-              </div>
-
-              {job.error && (
-                <p style={{ color: "#e74c3c", fontSize: 12, margin: "0 0 8px" }}>Error: {job.error}</p>
-              )}
-
-              {job.results.length > 0 && (
-                <div style={{ maxHeight: 200, overflowY: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ ...thStyle, fontSize: 11 }}>Title</th>
-                        <th style={{ ...thStyle, fontSize: 11 }}>Pack ID</th>
-                        <th style={{ ...thStyle, fontSize: 11 }}>Deep Link</th>
-                        <th style={{ ...thStyle, fontSize: 11 }}>Channel</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {job.results.map((r, i) => (
-                        <tr key={i}>
-                          <td style={tdStyle}>{r.title || r.error || "—"}</td>
-                          <td style={tdStyle}>{r.pack_id ?? "—"}</td>
-                          <td style={tdStyle}>
-                            {r.deep_link ? (
-                              <button
-                                onClick={() => {
-                                  try { navigator.clipboard.writeText(r.deep_link!); } catch { /* fallback */ }
-                                }}
-                                style={{ ...btn, padding: "2px 8px", fontSize: 11, background: "#eee" }}
-                                title={r.deep_link}
-                              >
-                                📋 Copy
-                              </button>
-                            ) : (
-                              <span style={{ color: "#e74c3c" }}>{r.error || "—"}</span>
-                            )}
-                          </td>
-                          <td style={tdStyle}>
-                            {r.channel_posted ? (
-                              <span style={{ color: "#2ecc71" }}>✅</span>
-                            ) : r.error ? (
-                              <span style={{ color: "#e74c3c" }}>❌</span>
-                            ) : (
-                              <span style={{ color: "#f39c12" }}>⚠️</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
     </>
   );
 }
