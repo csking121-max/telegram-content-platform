@@ -26,6 +26,28 @@ import type {
 let _idCounter = 0;
 const uid = () => `v_${++_idCounter}_${Date.now()}`;
 
+const STORAGE_KEY = "cf_uploads";
+
+function loadSavedUploads(): UploadedVideo[] {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const items = JSON.parse(raw) as UploadedVideo[];
+    // Drop items still marked as uploading (interrupted by tab switch)
+    return items
+      .filter((v) => !v.uploading && !v.error && v.storage_message_id > 0)
+      .map((v) => ({ ...v, uploading: false }));
+  } catch {
+    return [];
+  }
+}
+
+function saveUploads(items: UploadedVideo[]) {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  } catch { /* quota exceeded — ignore */ }
+}
+
 /* ── styles ────────────────────────────────────────────── */
 
 const card: React.CSSProperties = {
@@ -109,7 +131,7 @@ const tdStyle: React.CSSProperties = {
 /* ── component ─────────────────────────────────────────── */
 
 export default function ContentFactory() {
-  const [videos, setVideos] = useState<UploadedVideo[]>([]);
+  const [videos, setVideos] = useState<UploadedVideo[]>(loadSavedUploads);
   const [categories, setCategories] = useState<ContentCategory[]>([]);
   const [bots, setBots] = useState<Bot[]>([]);
   const [mode, setMode] = useState<"solo" | "group">("solo");
@@ -138,6 +160,11 @@ export default function ContentFactory() {
   const [groupCreditPerItem, setGroupCreditPerItem] = useState(1);
   const [groupBotId, setGroupBotId] = useState(0);
   const [groupThumbId, setGroupThumbId] = useState("");
+
+  // Persist uploads to sessionStorage so tab switches don't lose them
+  useEffect(() => {
+    saveUploads(videos);
+  }, [videos]);
 
   // Load initial data
   useEffect(() => {

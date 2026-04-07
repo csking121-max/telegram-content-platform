@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 TELEGRAM_API = "https://api.telegram.org"
+TELEGRAM_LOCAL_API = os.environ.get("TELEGRAM_LOCAL_API_URL", "")  # e.g. http://telegram-bot-api:8081
 
 # Track running asyncio tasks so multiple jobs can run concurrently
 _running_tasks: dict[str, asyncio.Task] = {}
@@ -73,9 +75,11 @@ async def _tg_upload_file(
     data: dict,
     files: dict,
     timeout: int = 120,
+    api_base: str = "",
 ) -> dict | None:
     """Call Telegram Bot API with file upload (multipart/form-data)."""
-    url = f"{TELEGRAM_API}/bot{token}/{method}"
+    base = api_base or TELEGRAM_API
+    url = f"{base}/bot{token}/{method}"
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, data=data, files=files)
@@ -166,8 +170,12 @@ async def upload_file(
     size_mb = len(file_bytes) / (1024 * 1024)
     if size_mb > 2048:
         raise HTTPException(413, "File must be under 2 GB")
-    if size_mb > 50:
-        logger.info("Large file %.1f MB — will attempt upload (may need Local Bot API)", size_mb)
+
+    # Use Local Bot API for files >50 MB (cloud API limit)
+    use_local = size_mb > 50 and TELEGRAM_LOCAL_API
+    api_base = TELEGRAM_LOCAL_API if use_local else TELEGRAM_API
+    if use_local:
+        logger.info("Large file %.1f MB — routing through Local Bot API", size_mb)
 
     tg_method, field_name = _tg_method_for_type(media_type)
     extra_data: dict = {}
@@ -182,6 +190,7 @@ async def upload_file(
         data={"chat_id": str(storage_group_id), **extra_data},
         files={field_name: (file.filename or "file", file_bytes, ct)},
         timeout=upload_timeout,
+        api_base=api_base,
     )
 
     if not result or not result.get("ok"):

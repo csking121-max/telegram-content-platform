@@ -227,6 +227,70 @@ async def get_pack_items_internal(
 
 # ── Content proxy (cross-bot delivery fallback) ─────────────
 
+class _CopyRequest(BaseModel):
+    chat_id: int
+    storage_chat_id: int
+    storage_message_id: int
+
+
+@router.post("/copy-via-storage-bot")
+async def copy_via_storage_bot(
+    body: _CopyRequest,
+    db: AsyncSession = Depends(get_db),
+    _auth: None = Depends(verify_internal_key),
+):
+    """Use the storage bot (first active bot) to copyMessage to user.
+
+    Instant delivery — no download/re-upload needed. Works because the
+    storage bot is a member of the storage group AND the user has /start'd
+    at least one bot on the platform.
+    """
+    bot_svc = BotService(db)
+    bots = await bot_svc.list_active()
+    if not bots:
+        raise HTTPException(503, "No active bots")
+    storage_bot = bots[0]
+
+    result = await _tg_request(storage_bot.bot_token, "copyMessage", {
+        "chat_id": body.chat_id,
+        "from_chat_id": body.storage_chat_id,
+        "message_id": body.storage_message_id,
+    })
+
+    if result and result.get("ok"):
+        return {"ok": True, "message_id": result["result"]["message_id"]}
+
+    return {"ok": False, "error": "copyMessage failed — user may not have started the storage bot"}
+
+
+@router.post("/copy-via-storage-bot/batch")
+async def copy_batch_via_storage_bot(
+    items: list[_CopyRequest],
+    db: AsyncSession = Depends(get_db),
+    _auth: None = Depends(verify_internal_key),
+):
+    """Batch copyMessage via storage bot — all items sent in parallel."""
+    bot_svc = BotService(db)
+    bots = await bot_svc.list_active()
+    if not bots:
+        raise HTTPException(503, "No active bots")
+    storage_bot = bots[0]
+    token = storage_bot.bot_token
+
+    async def _copy_one(item: _CopyRequest) -> dict:
+        result = await _tg_request(token, "copyMessage", {
+            "chat_id": item.chat_id,
+            "from_chat_id": item.storage_chat_id,
+            "message_id": item.storage_message_id,
+        })
+        if result and result.get("ok"):
+            return {"ok": True, "message_id": result["result"]["message_id"]}
+        return {"ok": False}
+
+    results = await asyncio.gather(*[_copy_one(it) for it in items])
+    return list(results)
+
+
 @router.get("/content-proxy/{storage_chat_id}/{storage_message_id}")
 async def proxy_content(
     storage_chat_id: int,

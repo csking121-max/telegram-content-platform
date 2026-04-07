@@ -388,9 +388,10 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
     """Fetch pack items from backend and deliver via copy_message.
 
     Returns the list of sent message IDs so the caller can schedule deletion.
-    Each copy_message has a 30-second timeout to prevent hanging.
-    Falls back to a backend content proxy when copy_message fails
-    (cross-bot: delivery bot not in storage group).
+    Strategy:
+      1. Try copy_message directly (works if delivery bot is in storage group)
+      2. If first item fails, switch to batch relay via storage bot (instant)
+      3. If relay also fails, fall back to proxy download + re-upload
     """
     bot: Bot = message.bot  # type: ignore
     user_chat_id = message.chat.id
@@ -402,45 +403,80 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
             await message.answer("Content pack is empty or not found.")
             return sent_ids
 
-        delivered = 0
-        for item in items:
-            storage_chat_id = item.get("storage_chat_id")
-            storage_message_id = item.get("storage_message_id")
-            media_type = item.get("media_type", "document")
-            if not storage_chat_id or not storage_message_id:
-                continue
-            try:
-                sent = await asyncio.wait_for(
-                    bot.copy_message(
-                        chat_id=user_chat_id,
-                        from_chat_id=storage_chat_id,
-                        message_id=storage_message_id,
-                    ),
-                    timeout=30,
-                )
-                sent_ids.append(sent.message_id)
-                delivered += 1
-                await asyncio.sleep(0.1)
-            except (asyncio.TimeoutError, Exception) as e:
-                logger.warning(
-                    "copy_message failed for %s/%s: %s — trying proxy fallback",
-                    storage_chat_id, storage_message_id, e,
-                )
-                # Fallback: download via backend proxy, re-send via delivery bot
-                sent_msg = await _deliver_via_proxy(
-                    bot, user_chat_id, storage_chat_id, storage_message_id, media_type,
-                )
-                if sent_msg:
-                    sent_ids.append(sent_msg.message_id)
-                    delivered += 1
-                    await asyncio.sleep(0.1)
+        valid_items = [
+            it for it in items
+            if it.get("storage_chat_id") and it.get("storage_message_id")
+        ]
+        if not valid_items:
+            await message.answer("Content pack is empty or not found.")
+            return sent_ids
 
-        if delivered == 0:
+        # ── Attempt 1: direct copy_message (fastest, same-bot) ──
+        first = valid_items[0]
+        direct_works = False
+        try:
+            sent = await asyncio.wait_for(
+                bot.copy_message(
+                    chat_id=user_chat_id,
+                    from_chat_id=first["storage_chat_id"],
+                    message_id=first["storage_message_id"],
+                ),
+                timeout=5,
+            )
+            sent_ids.append(sent.message_id)
+            direct_works = True
+        except Exception:
+            pass  # direct copy failed, will use relay
+
+        if direct_works:
+            # Direct works — copy remaining items (fast path)
+            for item in valid_items[1:]:
+                try:
+                    sent = await asyncio.wait_for(
+                        bot.copy_message(
+                            chat_id=user_chat_id,
+                            from_chat_id=item["storage_chat_id"],
+                            message_id=item["storage_message_id"],
+                        ),
+                        timeout=10,
+                    )
+                    sent_ids.append(sent.message_id)
+                except Exception as e:
+                    logger.warning("Direct copy failed for item %s: %s", item.get("id"), e)
+        else:
+            # ── Attempt 2: batch relay via storage bot (instant) ──
+            batch = [
+                {
+                    "chat_id": user_chat_id,
+                    "storage_chat_id": it["storage_chat_id"],
+                    "storage_message_id": it["storage_message_id"],
+                }
+                for it in valid_items
+            ]
+            relay_result = await api_post("/internal/copy-via-storage-bot/batch", batch)
+
+            if relay_result and isinstance(relay_result, list):
+                for r in relay_result:
+                    if r.get("ok"):
+                        sent_ids.append(r["message_id"])
+            else:
+                # ── Attempt 3: proxy download fallback (slowest) ──
+                for item in valid_items:
+                    sent_msg = await _deliver_via_proxy(
+                        bot, user_chat_id,
+                        item["storage_chat_id"],
+                        item["storage_message_id"],
+                        item.get("media_type", "document"),
+                    )
+                    if sent_msg:
+                        sent_ids.append(sent_msg.message_id)
+
+        if not sent_ids:
             await message.answer("Could not deliver content. Please contact support.")
         else:
             logger.info(
                 "Delivered %d/%d items from pack %s to user %s",
-                delivered, len(items), pack_id, user_chat_id,
+                len(sent_ids), len(valid_items), pack_id, user_chat_id,
             )
     except Exception:
         logger.exception("Content delivery failed for pack %s", pack_id)
