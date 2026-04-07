@@ -21,6 +21,7 @@ class UserStreak(Base):
     current_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     longest_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_streak_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    last_spend_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     today_spent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_bonus_earned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_milestone_claimed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

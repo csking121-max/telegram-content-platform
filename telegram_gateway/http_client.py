@@ -106,6 +106,16 @@ async def api_get(path: str) -> dict | list | None:
     return None
 
 
+async def api_get_bytes(path: str, timeout: int = 60) -> tuple[bytes, dict[str, str]] | None:
+    """GET raw bytes from backend API. Returns (bytes, headers) or None."""
+    async with httpx.AsyncClient(base_url=BACKEND_URL, timeout=timeout) as client:
+        resp = await client.get(path, headers=_internal_headers())
+        if resp.status_code == 200:
+            return resp.content, dict(resp.headers)
+        logger.warning("GET bytes %s → %s", path, resp.status_code)
+    return None
+
+
 async def api_post(path: str, payload: Any) -> dict | None:
     """Simple POST to the backend API."""
     try:

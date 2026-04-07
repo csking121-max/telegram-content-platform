@@ -48,20 +48,17 @@ class StreakEngine:
 
         streak = await self._get_or_create(user_id)
 
-        # Reset today_spent if it's a new day
-        if streak.last_streak_date != today:
-            # Check if yesterday was a streak day (consecutive)
-            yesterday = today - timedelta(days=1)
-            if streak.last_streak_date == yesterday:
-                # Yesterday was tracked — streak continues
-                # (streak was already advanced when yesterday qualified)
-                pass
-            elif streak.last_streak_date and streak.last_streak_date < yesterday:
-                # Missed a day — streak resets, but only if the last day was fully qualified
-                streak.current_streak = 0
-                streak.last_milestone_claimed = 0
-
+        # Reset today_spent if it's a new day (based on last_spend_date, NOT last_streak_date)
+        if streak.last_spend_date != today:
             streak.today_spent = 0
+            streak.last_spend_date = today
+
+            # Check if the streak has been broken (missed a qualifying day)
+            if streak.last_streak_date:
+                yesterday = today - timedelta(days=1)
+                if streak.last_streak_date < yesterday:
+                    streak.current_streak = 0
+                    streak.last_milestone_claimed = 0
 
         # Add today's spend
         streak.today_spent += amount
@@ -119,9 +116,7 @@ class StreakEngine:
         if streak.last_streak_date and streak.last_streak_date < today - timedelta(days=1):
             current = 0  # Expired (display only, don't mutate here)
 
-        today_progress = streak.today_spent if streak.last_streak_date == today or streak.today_spent > 0 else 0
-        if streak.last_streak_date != today:
-            today_progress = streak.today_spent  # might be partial
+        today_progress = streak.today_spent if streak.last_spend_date == today else 0
 
         # Recalculate — if last_streak_date is today, today_spent is finalized for display
         today_qualified = streak.last_streak_date == today
@@ -137,7 +132,7 @@ class StreakEngine:
             "enabled": enabled,
             "current_streak": current,
             "longest_streak": streak.longest_streak,
-            "today_spent": streak.today_spent if streak.last_streak_date == today else 0,
+            "today_spent": streak.today_spent if streak.last_spend_date == today else 0,
             "today_qualified": today_qualified,
             "min_daily_spend": min_spend,
             "total_bonus_earned": streak.total_bonus_earned,

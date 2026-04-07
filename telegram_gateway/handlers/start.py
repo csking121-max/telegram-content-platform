@@ -26,7 +26,7 @@ from aiogram.types import (
     Message,
 )
 
-from telegram_gateway.http_client import forward_to_backend, api_get, api_post
+from telegram_gateway.http_client import forward_to_backend, api_get, api_get_bytes, api_post
 from telegram_gateway.handlers.payment import _build_enter_utr_kb, _show_pending_orders
 from telegram_gateway.redis_state import set_pending_order
 from telegram_gateway.message_tracker import track
@@ -389,6 +389,8 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
 
     Returns the list of sent message IDs so the caller can schedule deletion.
     Each copy_message has a 30-second timeout to prevent hanging.
+    Falls back to a backend content proxy when copy_message fails
+    (cross-bot: delivery bot not in storage group).
     """
     bot: Bot = message.bot  # type: ignore
     user_chat_id = message.chat.id
@@ -404,6 +406,7 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
         for item in items:
             storage_chat_id = item.get("storage_chat_id")
             storage_message_id = item.get("storage_message_id")
+            media_type = item.get("media_type", "document")
             if not storage_chat_id or not storage_message_id:
                 continue
             try:
@@ -417,18 +420,20 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
                 )
                 sent_ids.append(sent.message_id)
                 delivered += 1
-                # Small delay to respect rate limits
                 await asyncio.sleep(0.1)
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(
-                    "Timeout copying message %s from chat %s for pack %s",
-                    storage_message_id, storage_chat_id, pack_id,
+                    "copy_message failed for %s/%s: %s — trying proxy fallback",
+                    storage_chat_id, storage_message_id, e,
                 )
-            except Exception as e:
-                logger.warning(
-                    "Failed to copy message %s from chat %s: %s",
-                    storage_message_id, storage_chat_id, e,
+                # Fallback: download via backend proxy, re-send via delivery bot
+                sent_msg = await _deliver_via_proxy(
+                    bot, user_chat_id, storage_chat_id, storage_message_id, media_type,
                 )
+                if sent_msg:
+                    sent_ids.append(sent_msg.message_id)
+                    delivered += 1
+                    await asyncio.sleep(0.1)
 
         if delivered == 0:
             await message.answer("Could not deliver content. Please contact support.")
@@ -442,6 +447,37 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
         await message.answer("Delivery failed. Please try again later.")
 
     return sent_ids
+
+
+async def _deliver_via_proxy(
+    bot: Bot,
+    chat_id: int,
+    storage_chat_id: int,
+    storage_message_id: int,
+    media_type: str,
+) -> Message | None:
+    """Download content via backend proxy and send to user via delivery bot."""
+    try:
+        result = await api_get_bytes(
+            f"/internal/content-proxy/{storage_chat_id}/{storage_message_id}",
+        )
+        if not result:
+            return None
+        file_bytes, headers = result
+        mt = headers.get("x-media-type", media_type)
+        input_file = BufferedInputFile(file_bytes, filename=f"content.{mt}")
+
+        if mt == "photo":
+            return await bot.send_photo(chat_id=chat_id, photo=input_file)
+        elif mt == "video":
+            return await bot.send_video(chat_id=chat_id, video=input_file)
+        elif mt == "animation":
+            return await bot.send_animation(chat_id=chat_id, animation=input_file)
+        else:
+            return await bot.send_document(chat_id=chat_id, document=input_file)
+    except Exception as e:
+        logger.warning("Proxy delivery failed for %s/%s: %s", storage_chat_id, storage_message_id, e)
+        return None
 
 
 async def _schedule_delete(bot: Bot, chat_id: int, message_ids: list[int], delay: int) -> None:
