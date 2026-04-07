@@ -194,9 +194,18 @@ async def upload_file(
     )
 
     if not result or not result.get("ok"):
+        desc = result.get("description", "") if result else ""
+        if "Request Entity Too Large" in desc or (not result and size_mb > 50):
+            if not TELEGRAM_LOCAL_API:
+                raise HTTPException(
+                    413,
+                    f"File is {size_mb:.0f} MB — Telegram cloud API only supports up to 50 MB. "
+                    "To upload larger files, set up TELEGRAM_API_ID and TELEGRAM_API_HASH "
+                    "in .env (from my.telegram.org) and start the Local Bot API service.",
+                )
         detail = "Failed to upload file to Telegram storage group"
-        if result and result.get("description"):
-            detail += f": {result['description']}"
+        if desc:
+            detail += f": {desc}"
         raise HTTPException(502, detail)
 
     msg = result["result"]

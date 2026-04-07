@@ -144,7 +144,8 @@ services:
 
   # ── Telegram Bot API Local Server ───────────────────────
   # Lifts the 50 MB upload limit to 2 GB.
-  # Backend uses TELEGRAM_LOCAL_API_URL to route uploads through this.
+  # Requires TELEGRAM_API_ID and TELEGRAM_API_HASH in .env (from my.telegram.org).
+  # Start with: docker compose --profile local-api up -d telegram-bot-api
   telegram-bot-api:
     image: aiogram/telegram-bot-api:latest
     environment:
@@ -154,6 +155,8 @@ services:
     volumes:
       - tg_bot_api_data:/var/lib/telegram-bot-api
     restart: unless-stopped
+    profiles:
+      - local-api
     networks:
       - app-network
 
