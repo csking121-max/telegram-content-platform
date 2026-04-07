@@ -344,6 +344,7 @@ async def delete_default_thumbnail(
 class PublishItem(BaseModel):
     storage_chat_id: int
     storage_message_id: int
+    file_id: str | None = None
     media_type: str = "video"
     title: str = ""
     access_type: str = "free"
@@ -493,6 +494,7 @@ async def _publish_group(job_id: str, body: PublishRequest):
                 pack_id=pack.id,
                 storage_chat_id=item.storage_chat_id,
                 storage_message_id=item.storage_message_id,
+                file_id=item.file_id,
                 media_type=item.media_type,
                 order_index=idx,
             )
@@ -547,6 +549,7 @@ async def _publish_solo(job_id: str, body: PublishRequest, delay: float):
                     pack_id=pack.id,
                     storage_chat_id=item.storage_chat_id,
                     storage_message_id=item.storage_message_id,
+                    file_id=item.file_id,
                     media_type=item.media_type,
                     order_index=0,
                 ))

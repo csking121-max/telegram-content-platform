@@ -403,6 +403,7 @@ export default function ContentFactory() {
       const items = readyVideos.map((v) => ({
         storage_chat_id: v.storage_chat_id,
         storage_message_id: v.storage_message_id,
+        file_id: v.file_id || null,
         media_type: v.media_type,
         title: v.title,
         access_type: mode === "group" ? groupCategory : v.access_type,

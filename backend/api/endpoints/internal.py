@@ -300,12 +300,12 @@ async def proxy_content(
 ):
     """Download content from storage group via first active bot.
 
-    Used by the gateway when the delivery bot can't copy_message from
-    the storage group (cross-bot file_id / membership issue).
-    The first active bot (storage bot) forwards the message to itself,
-    extracts the file_id, downloads the file, and returns the bytes.
+    Uses stored file_id from query params when available (fast path).
+    Falls back to forwardMessage extraction if file_id not provided.
     """
     from starlette.responses import Response
+    from starlette.requests import Request
+    from fastapi import Request as FastAPIRequest
 
     bot_svc = BotService(db)
     bots = await bot_svc.list_active()
@@ -314,49 +314,85 @@ async def proxy_content(
     storage_bot = bots[0]
     token = storage_bot.bot_token
 
-    # Forward message within storage group to get full Message object
-    fwd = await _tg_request(token, "forwardMessage", {
-        "chat_id": storage_chat_id,
-        "from_chat_id": storage_chat_id,
-        "message_id": storage_message_id,
-    })
-    if not fwd or not fwd.get("ok"):
-        raise HTTPException(502, "Cannot access storage content")
+    # Check if file_id and media_type were passed as query params
+    # (set by gateway when pack_item has stored file_id)
+    from starlette.requests import Request as _Req
 
-    msg = fwd["result"]
-    fwd_msg_id = msg.get("message_id")
-
-    # Extract file_id from the forwarded message
     file_id = None
     media_type = "document"
-    if msg.get("photo"):
-        photos = msg["photo"]
-        file_id = photos[-1]["file_id"] if photos else None
-        media_type = "photo"
-    elif msg.get("video"):
-        file_id = msg["video"].get("file_id")
-        media_type = "video"
-    elif msg.get("animation"):
-        file_id = msg["animation"].get("file_id")
-        media_type = "animation"
-    elif msg.get("document"):
-        file_id = msg["document"].get("file_id")
-        media_type = "document"
-    elif msg.get("audio"):
-        file_id = msg["audio"].get("file_id")
-        media_type = "audio"
 
-    # Clean up the forwarded copy
-    if fwd_msg_id:
-        await _tg_request(token, "deleteMessage", {
+    # Try to get from pack_items table first
+    cs = ContentService(db)
+    from sqlalchemy import select as sa_select
+    from backend.models.pack_item import PackItem as _PI
+    result = await db.execute(
+        sa_select(_PI).where(
+            _PI.storage_chat_id == storage_chat_id,
+            _PI.storage_message_id == storage_message_id,
+        ).limit(1)
+    )
+    pack_item = result.scalar_one_or_none()
+    if pack_item and pack_item.file_id:
+        file_id = pack_item.file_id
+        media_type = pack_item.media_type or "document"
+    else:
+        # Fallback: forward message to extract file_id
+        fwd = await _tg_request(token, "forwardMessage", {
             "chat_id": storage_chat_id,
-            "message_id": fwd_msg_id,
+            "from_chat_id": storage_chat_id,
+            "message_id": storage_message_id,
         })
+        if not fwd or not fwd.get("ok"):
+            raise HTTPException(502, "Cannot access storage content")
+
+        msg = fwd["result"]
+        fwd_msg_id = msg.get("message_id")
+
+        if msg.get("photo"):
+            photos = msg["photo"]
+            file_id = photos[-1]["file_id"] if photos else None
+            media_type = "photo"
+        elif msg.get("video"):
+            file_id = msg["video"].get("file_id")
+            media_type = "video"
+        elif msg.get("animation"):
+            file_id = msg["animation"].get("file_id")
+            media_type = "animation"
+        elif msg.get("document"):
+            file_id = msg["document"].get("file_id")
+            media_type = "document"
+        elif msg.get("audio"):
+            file_id = msg["audio"].get("file_id")
+            media_type = "audio"
+
+        # Download FIRST, then clean up forwarded message
+        try:
+            dl_result = await _download_file(token, file_id, media_type)
+        finally:
+            if fwd_msg_id:
+                await _tg_request(token, "deleteMessage", {
+                    "chat_id": storage_chat_id,
+                    "message_id": fwd_msg_id,
+                })
+        if dl_result:
+            return dl_result
+        raise HTTPException(502, "Download failed")
 
     if not file_id:
         raise HTTPException(502, "No file found in storage message")
 
-    # Download the file via Telegram getFile API
+    dl_result = await _download_file(token, file_id, media_type)
+    if dl_result:
+        return dl_result
+    raise HTTPException(502, "Download failed")
+
+
+async def _download_file(token: str, file_id: str | None, media_type: str):
+    """Download file bytes via Telegram getFile API."""
+    from starlette.responses import Response
+
+    if not file_id:
+        return None
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
@@ -364,23 +400,22 @@ async def proxy_content(
                 json={"file_id": file_id},
             )
             if resp.status_code != 200:
-                raise HTTPException(502, "getFile failed")
+                logger.warning("getFile failed: %s %s", resp.status_code, resp.text[:200])
+                return None
             file_path = resp.json().get("result", {}).get("file_path")
             if not file_path:
-                raise HTTPException(502, "No file_path in getFile response")
+                return None
             dl = await client.get(f"{TELEGRAM_API}/file/bot{token}/{file_path}")
             if dl.status_code != 200:
-                raise HTTPException(502, "File download failed")
+                return None
             return Response(
                 content=dl.content,
                 media_type="application/octet-stream",
                 headers={"X-Media-Type": media_type},
             )
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error("Content proxy download failed: %s", e)
-        raise HTTPException(502, "Download failed")
+        return None
 
 
 # ── Message tracking (gateway reports in/out message IDs) ───

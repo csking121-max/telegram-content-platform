@@ -13,6 +13,7 @@ class PackItem(Base):
     pack_id: Mapped[int] = mapped_column(Integer, ForeignKey("content_packs.id", ondelete="CASCADE"), nullable=False, index=True)
     storage_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     storage_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    file_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     media_type: Mapped[str] = mapped_column(String(32), nullable=False)  # photo | video | document | animation
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
