@@ -390,8 +390,8 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
     Returns the list of sent message IDs so the caller can schedule deletion.
     Strategy:
       1. Try copy_message directly (works if delivery bot is in storage group)
-      2. If first item fails, switch to batch relay via storage bot (instant)
-      3. If relay also fails, fall back to proxy download + re-upload
+      2. If direct fails, parallel proxy: download via storage bot + re-upload
+         via delivery bot (content appears in correct bot's chat)
     """
     bot: Bot = message.bot  # type: ignore
     user_chat_id = message.chat.id
@@ -429,8 +429,8 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
             pass  # direct copy failed, will use relay
 
         if direct_works:
-            # Direct works — copy remaining items (fast path)
-            for item in valid_items[1:]:
+            # Direct works — copy remaining items in parallel (fast path)
+            async def _direct_copy(item: dict) -> int | None:
                 try:
                     sent = await asyncio.wait_for(
                         bot.copy_message(
@@ -440,36 +440,30 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
                         ),
                         timeout=10,
                     )
-                    sent_ids.append(sent.message_id)
+                    return sent.message_id
                 except Exception as e:
                     logger.warning("Direct copy failed for item %s: %s", item.get("id"), e)
+                    return None
+
+            results = await asyncio.gather(*[_direct_copy(it) for it in valid_items[1:]])
+            sent_ids.extend(mid for mid in results if mid is not None)
         else:
-            # ── Attempt 2: batch relay via storage bot (instant) ──
-            batch = [
-                {
-                    "chat_id": user_chat_id,
-                    "storage_chat_id": it["storage_chat_id"],
-                    "storage_message_id": it["storage_message_id"],
-                }
+            # ── Attempt 2: parallel proxy via delivery bot ──
+            # Download all items via storage bot, re-upload via delivery bot
+            # so content appears in the correct bot's chat.
+            tasks = [
+                _deliver_via_proxy(
+                    bot, user_chat_id,
+                    it["storage_chat_id"],
+                    it["storage_message_id"],
+                    it.get("media_type", "document"),
+                )
                 for it in valid_items
             ]
-            relay_result = await api_post("/internal/copy-via-storage-bot/batch", batch)
-
-            if relay_result and isinstance(relay_result, list):
-                for r in relay_result:
-                    if r.get("ok"):
-                        sent_ids.append(r["message_id"])
-            else:
-                # ── Attempt 3: proxy download fallback (slowest) ──
-                for item in valid_items:
-                    sent_msg = await _deliver_via_proxy(
-                        bot, user_chat_id,
-                        item["storage_chat_id"],
-                        item["storage_message_id"],
-                        item.get("media_type", "document"),
-                    )
-                    if sent_msg:
-                        sent_ids.append(sent_msg.message_id)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Message):
+                    sent_ids.append(r.message_id)
 
         if not sent_ids:
             await message.answer("Could not deliver content. Please contact support.")
