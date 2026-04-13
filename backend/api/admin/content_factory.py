@@ -41,8 +41,28 @@ router = APIRouter()
 TELEGRAM_API = "https://api.telegram.org"
 TELEGRAM_LOCAL_API = os.environ.get("TELEGRAM_LOCAL_API_URL", "")  # e.g. http://telegram-bot-api:8081
 
+# Cached flag: whether the Local Bot API is actually reachable
+_local_api_available: bool | None = None  # None = not yet checked
+
 # Track running asyncio tasks so multiple jobs can run concurrently
 _running_tasks: dict[str, asyncio.Task] = {}
+
+
+async def _check_local_api() -> bool:
+    """Quick connectivity check for the Local Bot API server."""
+    global _local_api_available
+    if not TELEGRAM_LOCAL_API:
+        _local_api_available = False
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(TELEGRAM_LOCAL_API)
+            _local_api_available = resp.status_code < 500
+    except Exception:
+        _local_api_available = False
+    if not _local_api_available:
+        logger.warning("Local Bot API at %s is not reachable — will use cloud API", TELEGRAM_LOCAL_API)
+    return _local_api_available
 
 
 # ── Telegram helpers ─────────────────────────────────────────
@@ -289,11 +309,20 @@ async def upload_file(
     if size_mb > 2048:
         raise HTTPException(413, "File must be under 2 GB")
 
-    # Use Local Bot API for files >50 MB (cloud API limit)
-    use_local = size_mb > 50 and TELEGRAM_LOCAL_API
+    # Check Local Bot API reachability (cached after first check)
+    global _local_api_available
+    if _local_api_available is None and TELEGRAM_LOCAL_API:
+        await _check_local_api()
+
+    use_local = size_mb > 50 and TELEGRAM_LOCAL_API and _local_api_available
     api_base = TELEGRAM_LOCAL_API if use_local else TELEGRAM_API
     if use_local:
         logger.info("Large file %.1f MB — routing through Local Bot API", size_mb)
+    elif size_mb > 50:
+        logger.warning(
+            "Large file %.1f MB but Local Bot API unavailable — trying cloud API (may fail for >50 MB)",
+            size_mb,
+        )
 
     tg_method, field_name = _tg_method_for_type(media_type)
     extra_data: dict = {}
@@ -302,25 +331,39 @@ async def upload_file(
 
     upload_timeout = max(120, int(size_mb / 50 * 60) + 60)
 
-    result = await _tg_upload_file(
-        bot.bot_token,
-        tg_method,
+    upload_kwargs = dict(
+        token=bot.bot_token,
+        method=tg_method,
         data={"chat_id": str(storage_group_id), **extra_data},
         files={field_name: (file.filename or "file", file_bytes, ct)},
         timeout=upload_timeout,
-        api_base=api_base,
     )
+
+    # Try up to 2 times: first with chosen API, then fallback
+    result = await _tg_upload_file(**upload_kwargs, api_base=api_base)
+
+    # If Local Bot API failed, retry with cloud API
+    if not result and use_local:
+        logger.warning("Local Bot API failed — retrying with cloud API")
+        result = await _tg_upload_file(**upload_kwargs, api_base=TELEGRAM_API)
+        if result and result.get("ok"):
+            logger.info("Cloud API fallback succeeded for %.1f MB file", size_mb)
+
+    # If cloud API failed, retry once more (transient errors)
+    if not result or not result.get("ok"):
+        logger.info("First attempt failed — retrying upload in 2s")
+        await asyncio.sleep(2)
+        result = await _tg_upload_file(**upload_kwargs, api_base=TELEGRAM_API)
 
     if not result or not result.get("ok"):
         desc = result.get("description", "") if result else ""
         if "Request Entity Too Large" in desc or (not result and size_mb > 50):
-            if not TELEGRAM_LOCAL_API:
-                raise HTTPException(
-                    413,
-                    f"File is {size_mb:.0f} MB — Telegram cloud API only supports up to 50 MB. "
-                    "To upload larger files, set up TELEGRAM_API_ID and TELEGRAM_API_HASH "
-                    "in .env (from my.telegram.org) and start the Local Bot API service.",
-                )
+            raise HTTPException(
+                413,
+                f"File is {size_mb:.0f} MB — Telegram cloud API supports up to 50 MB. "
+                "To upload larger files, configure the Local Bot API service "
+                "(requires TELEGRAM_API_ID and TELEGRAM_API_HASH in .env from my.telegram.org).",
+            )
         detail = "Failed to upload file to Telegram storage group"
         if desc:
             detail += f": {desc}"

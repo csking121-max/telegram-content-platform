@@ -303,55 +303,81 @@ export default function ContentFactory() {
     [bots, defaultUploadBotId, defaultDeliveryBotId],
   );
 
-  // Upload staged files to Telegram — each item uses its own upload_bot_id
+  // Upload staged files to Telegram — concurrent with configurable parallelism
+  const UPLOAD_CONCURRENCY = 3;
+
+  const uploadSingleFile = useCallback(async (v: UploadedVideo) => {
+    if (!v.file) return;
+    try {
+      const result = await uploadVideo(v.file, undefined, v.upload_bot_id || undefined, v.blur);
+      setVideos((prev) =>
+        prev.map((x) =>
+          x.id === v.id
+            ? {
+                ...x,
+                storage_chat_id: result.storage_chat_id,
+                storage_message_id: result.storage_message_id,
+                file_id: result.file_id,
+                thumbnail_file_id: result.thumbnail_file_id || x.thumbnail_file_id,
+                duration: result.duration,
+                width: result.width,
+                height: result.height,
+                uploading: false,
+                uploaded: true,
+                file: null,
+              }
+            : x,
+        ),
+      );
+    } catch (err: unknown) {
+      let msg = "Upload failed";
+      if (err && typeof err === "object" && "response" in err) {
+        const resp = (err as { response?: { data?: { detail?: string }; status?: number } }).response;
+        msg = resp?.data?.detail || `Upload failed (HTTP ${resp?.status})`;
+      } else if (err instanceof Error) {
+        msg = err.message;
+      }
+      setVideos((prev) =>
+        prev.map((x) =>
+          x.id === v.id ? { ...x, uploading: false, error: msg } : x,
+        ),
+      );
+    }
+  }, []);
+
   const handleStartUpload = useCallback(async () => {
-    const staged = videos.filter((v) => !v.uploaded && !v.uploading && v.file);
+    const staged = videos.filter((v) => !v.uploaded && !v.uploading && v.file && !v.error);
     if (staged.length === 0) return;
 
     // Mark all staged as uploading
     setVideos((prev) =>
-      prev.map((v) => (v.file && !v.uploaded ? { ...v, uploading: true } : v)),
+      prev.map((v) => (v.file && !v.uploaded && !v.error ? { ...v, uploading: true } : v)),
     );
 
-    for (const v of staged) {
-      if (!v.file) continue;
-      try {
-        const result = await uploadVideo(v.file, undefined, v.upload_bot_id || undefined, v.blur);
-        setVideos((prev) =>
-          prev.map((x) =>
-            x.id === v.id
-              ? {
-                  ...x,
-                  storage_chat_id: result.storage_chat_id,
-                  storage_message_id: result.storage_message_id,
-                  file_id: result.file_id,
-                  thumbnail_file_id: result.thumbnail_file_id || x.thumbnail_file_id,
-                  duration: result.duration,
-                  width: result.width,
-                  height: result.height,
-                  uploading: false,
-                  uploaded: true,
-                  file: null,
-                }
-              : x,
-          ),
-        );
-      } catch (err: unknown) {
-        let msg = "Upload failed";
-        if (err && typeof err === "object" && "response" in err) {
-          const resp = (err as { response?: { data?: { detail?: string }; status?: number } }).response;
-          msg = resp?.data?.detail || `Upload failed (HTTP ${resp?.status})`;
-        } else if (err instanceof Error) {
-          msg = err.message;
-        }
-        setVideos((prev) =>
-          prev.map((x) =>
-            x.id === v.id ? { ...x, uploading: false, error: msg } : x,
-          ),
-        );
-      }
+    // Process in batches of UPLOAD_CONCURRENCY
+    for (let i = 0; i < staged.length; i += UPLOAD_CONCURRENCY) {
+      const batch = staged.slice(i, i + UPLOAD_CONCURRENCY);
+      await Promise.all(batch.map((v) => uploadSingleFile(v)));
     }
-  }, [videos]);
+  }, [videos, uploadSingleFile]);
+
+  // Retry all failed uploads
+  const handleRetryFailed = useCallback(async () => {
+    const failed = videos.filter((v) => v.error && v.file && !v.uploaded);
+    if (failed.length === 0) return;
+
+    // Clear errors and mark as uploading
+    setVideos((prev) =>
+      prev.map((v) =>
+        v.error && v.file && !v.uploaded ? { ...v, error: undefined, uploading: true } : v,
+      ),
+    );
+
+    for (let i = 0; i < failed.length; i += UPLOAD_CONCURRENCY) {
+      const batch = failed.slice(i, i + UPLOAD_CONCURRENCY);
+      await Promise.all(batch.map((v) => uploadSingleFile(v)));
+    }
+  }, [videos, uploadSingleFile]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -449,6 +475,7 @@ export default function ContentFactory() {
   const readyVideos = videos.filter((v) => v.uploaded && !v.error && v.storage_message_id > 0);
   const stagedVideos = videos.filter((v) => !v.uploaded && !v.uploading && !v.error && v.file);
   const uploadingVideos = videos.filter((v) => v.uploading);
+  const failedVideos = videos.filter((v) => v.error && v.file && !v.uploaded);
 
   const handlePublish = async () => {
     if (readyVideos.length === 0) return;
@@ -934,31 +961,53 @@ export default function ContentFactory() {
         />
       </div>
 
-      {/* ── Upload Control (shown when files are staged) ── */}
-      {(stagedVideos.length > 0 || uploadingVideos.length > 0) && (
+      {/* ── Upload Control (shown when files are staged or uploading or failed) ── */}
+      {(stagedVideos.length > 0 || uploadingVideos.length > 0 || failedVideos.length > 0) && (
         <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f0f7ff", border: "1px solid #c5dcf5" }}>
           <div>
             <span style={{ fontWeight: 600, fontSize: 14 }}>
               {uploadingVideos.length > 0
-                ? `⏳ Uploading ${uploadingVideos.length} file${uploadingVideos.length > 1 ? "s" : ""}…`
+                ? `⏳ Uploading ${uploadingVideos.length} file${uploadingVideos.length > 1 ? "s" : ""} (${UPLOAD_CONCURRENCY} concurrent)…`
                 : `📂 ${stagedVideos.length} file${stagedVideos.length > 1 ? "s" : ""} staged`}
             </span>
+            {failedVideos.length > 0 && (
+              <span style={{ fontSize: 13, color: "#d32f2f", marginLeft: 12, fontWeight: 600 }}>
+                ❌ {failedVideos.length} failed
+              </span>
+            )}
             <span style={{ fontSize: 12, color: "#888", marginLeft: 12 }}>
-              (each file uses its own upload bot)
+              ({UPLOAD_CONCURRENCY} files upload simultaneously)
             </span>
           </div>
-          <button
-            onClick={handleStartUpload}
-            disabled={uploadingVideos.length > 0 || stagedVideos.length === 0}
-            style={{
-              ...btnPrimary,
-              padding: "10px 24px",
-              fontSize: 15,
-              opacity: uploadingVideos.length > 0 ? 0.6 : 1,
-            }}
-          >
-            {uploadingVideos.length > 0 ? "⏳ Uploading…" : "🚀 Start Upload"}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {failedVideos.length > 0 && (
+              <button
+                onClick={handleRetryFailed}
+                disabled={uploadingVideos.length > 0}
+                style={{
+                  ...btnPrimary,
+                  padding: "10px 24px",
+                  fontSize: 15,
+                  background: "#d32f2f",
+                  opacity: uploadingVideos.length > 0 ? 0.6 : 1,
+                }}
+              >
+                🔄 Retry {failedVideos.length} Failed
+              </button>
+            )}
+            <button
+              onClick={handleStartUpload}
+              disabled={uploadingVideos.length > 0 || stagedVideos.length === 0}
+              style={{
+                ...btnPrimary,
+                padding: "10px 24px",
+                fontSize: 15,
+                opacity: uploadingVideos.length > 0 || stagedVideos.length === 0 ? 0.6 : 1,
+              }}
+            >
+              {uploadingVideos.length > 0 ? "⏳ Uploading…" : "🚀 Start Upload"}
+            </button>
+          </div>
         </div>
       )}
 
