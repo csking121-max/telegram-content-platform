@@ -454,10 +454,11 @@ export default function ContentFactory() {
 
     try {
       const items = readyVideos.map((v) => {
-        // Auto-thumbnail: if no thumbnail set, use the content's own file_id
+        // Auto-thumbnail: only use file_id for photos (videos can't be used as sendPhoto)
+        const autoThumb = v.media_type === "photo" ? v.file_id : null;
         const thumbId = mode === "group"
-          ? (groupThumbId || v.file_id || null)
-          : (v.thumbnail_file_id || v.file_id || null);
+          ? (groupThumbId || autoThumb || null)
+          : (v.thumbnail_file_id || autoThumb || null);
 
         return {
           storage_chat_id: v.storage_chat_id,
