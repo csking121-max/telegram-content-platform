@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -152,6 +154,99 @@ def _tg_method_for_type(media_type: str) -> tuple[str, str]:
     }.get(media_type, ("sendDocument", "document"))
 
 
+def _extract_video_thumbnail(video_bytes: bytes, seek_sec: float = 2.0) -> bytes | None:
+    """Extract a single frame from video at seek_sec using FFmpeg.
+
+    Returns JPEG bytes resized to max 320px wide, compressed under 200KB,
+    or None if extraction fails.
+    """
+    tmp_in = None
+    tmp_out = None
+    try:
+        tmp_in = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp_in.write(video_bytes)
+        tmp_in.close()
+
+        tmp_out = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        tmp_out.close()
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(seek_sec),
+            "-i", tmp_in.name,
+            "-frames:v", "1",
+            "-vf", "scale=320:-2",
+            "-q:v", "5",
+            tmp_out.name,
+        ]
+        proc = subprocess.run(
+            cmd, capture_output=True, timeout=15,
+        )
+        if proc.returncode != 0:
+            # If seek is past video end, retry at 0s
+            if seek_sec > 0:
+                return _extract_video_thumbnail(video_bytes, seek_sec=0)
+            logger.warning("FFmpeg frame extraction failed: %s", proc.stderr[:300])
+            return None
+
+        thumb_bytes = open(tmp_out.name, "rb").read()
+        if len(thumb_bytes) == 0:
+            return None
+        if len(thumb_bytes) > 200 * 1024:
+            # Re-encode with lower quality
+            cmd2 = [
+                "ffmpeg", "-y",
+                "-i", tmp_out.name,
+                "-q:v", "10",
+                tmp_out.name,
+            ]
+            subprocess.run(cmd2, capture_output=True, timeout=10)
+            thumb_bytes = open(tmp_out.name, "rb").read()
+        return thumb_bytes
+    except Exception as e:
+        logger.warning("Thumbnail extraction error: %s", e)
+        return None
+    finally:
+        for f in (tmp_in, tmp_out):
+            if f:
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
+
+
+async def _auto_thumbnail(
+    token: str, storage_group_id: int, media_type: str, file_bytes: bytes,
+) -> str | None:
+    """Auto-generate a thumbnail for videos by extracting a frame.
+
+    For photos, return None (photo file_id can be used directly).
+    Runs FFmpeg in a thread to avoid blocking the event loop.
+    """
+    if media_type != "video":
+        return None
+    try:
+        loop = asyncio.get_event_loop()
+        thumb_bytes = await loop.run_in_executor(
+            None, _extract_video_thumbnail, file_bytes, 2.0,
+        )
+        if not thumb_bytes:
+            return None
+        # Upload the thumbnail to Telegram storage group
+        result = await _tg_upload_file(
+            token, "sendPhoto",
+            data={"chat_id": str(storage_group_id)},
+            files={"photo": ("auto_thumb.jpg", thumb_bytes, "image/jpeg")},
+        )
+        if not result or not result.get("ok"):
+            return None
+        photos = result["result"].get("photo") or []
+        return photos[-1]["file_id"] if photos else None
+    except Exception as e:
+        logger.warning("Auto-thumbnail failed: %s", e)
+        return None
+
+
 # ── Upload endpoints ─────────────────────────────────────────
 
 @router.post("/upload")
@@ -241,6 +336,9 @@ async def upload_file(
         "duration": info.get("duration"),
         "width": info.get("width"),
         "height": info.get("height"),
+        "thumbnail_file_id": await _auto_thumbnail(
+            bot.bot_token, storage_group_id, media_type, file_bytes,
+        ),
     }
 
 

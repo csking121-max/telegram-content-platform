@@ -324,6 +324,7 @@ export default function ContentFactory() {
                   storage_chat_id: result.storage_chat_id,
                   storage_message_id: result.storage_message_id,
                   file_id: result.file_id,
+                  thumbnail_file_id: result.thumbnail_file_id || x.thumbnail_file_id,
                   duration: result.duration,
                   width: result.width,
                   height: result.height,
@@ -454,11 +455,9 @@ export default function ContentFactory() {
 
     try {
       const items = readyVideos.map((v) => {
-        // Auto-thumbnail: only use file_id for photos (videos can't be used as sendPhoto)
-        const autoThumb = v.media_type === "photo" ? v.file_id : null;
         const thumbId = mode === "group"
-          ? (groupThumbId || autoThumb || null)
-          : (v.thumbnail_file_id || autoThumb || null);
+          ? (groupThumbId || v.thumbnail_file_id || null)
+          : (v.thumbnail_file_id || null);
 
         return {
           storage_chat_id: v.storage_chat_id,
