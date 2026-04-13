@@ -291,6 +291,7 @@ export default function ContentFactory() {
           credit_per_item: 1,
           upload_bot_id: defUpload,
           bot_id: defDelivery,
+          blur: "none",
           uploading: false,
           uploaded: false,
         };
@@ -315,7 +316,7 @@ export default function ContentFactory() {
     for (const v of staged) {
       if (!v.file) continue;
       try {
-        const result = await uploadVideo(v.file, undefined, v.upload_bot_id || undefined);
+        const result = await uploadVideo(v.file, undefined, v.upload_bot_id || undefined, v.blur);
         setVideos((prev) =>
           prev.map((x) =>
             x.id === v.id
@@ -1057,6 +1058,16 @@ export default function ContentFactory() {
                     <option key={b.id} value={b.id}>@{b.bot_username}</option>
                   ))}
                 </select>
+                <select
+                  onChange={(e) => { if (e.target.value) applyToAll("blur", e.target.value); e.target.value = ""; }}
+                  style={{ ...select_, width: 140 }}
+                >
+                  <option value="">Set all blur…</option>
+                  <option value="none">No Blur</option>
+                  <option value="light">Light Blur</option>
+                  <option value="medium">Medium Blur</option>
+                  <option value="heavy">Heavy Blur</option>
+                </select>
                 {defaultThumbs.length > 0 && (
                   <select
                     onChange={(e) => { if (e.target.value) applyToAll("thumbnail_file_id", e.target.value); e.target.value = ""; }}
@@ -1085,6 +1096,7 @@ export default function ContentFactory() {
                     <th style={thStyle}>Cost</th>
                     <th style={thStyle}>Upload Bot</th>
                     <th style={thStyle}>Delivery Bot</th>
+                    <th style={thStyle}>Blur</th>
                     <th style={thStyle}>Thumbnail</th>
                   </>
                 )}
@@ -1173,6 +1185,20 @@ export default function ContentFactory() {
                         {v.uploaded && v.upload_bot_id > 0 && v.upload_bot_id !== v.bot_id && (
                           <span style={{ fontSize: 10, color: "#b8860b" }} title="Different bots = proxy (slower)">🐢</span>
                         )}
+                      </td>
+                      <td style={tdStyle}>
+                        <select
+                          value={v.blur}
+                          onChange={(e) => updateVideo(v.id, { blur: e.target.value })}
+                          style={{ ...select_, minWidth: 100 }}
+                          disabled={v.uploaded}
+                          title={v.uploaded ? "Already uploaded" : "Blur level for auto-thumbnail"}
+                        >
+                          <option value="none">No Blur</option>
+                          <option value="light">Light Blur</option>
+                          <option value="medium">Medium Blur</option>
+                          <option value="heavy">Heavy Blur</option>
+                        </select>
                       </td>
                       <td style={tdStyle}>
                         <ThumbSelector

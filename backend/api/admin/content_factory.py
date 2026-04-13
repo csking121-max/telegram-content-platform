@@ -154,11 +154,20 @@ def _tg_method_for_type(media_type: str) -> tuple[str, str]:
     }.get(media_type, ("sendDocument", "document"))
 
 
-def _extract_video_thumbnail(video_bytes: bytes, seek_sec: float = 2.0) -> bytes | None:
+BLUR_FILTERS = {
+    "light": "boxblur=5:1",
+    "medium": "boxblur=10:1",
+    "heavy": "boxblur=20:1",
+}
+
+
+def _extract_video_thumbnail(
+    video_bytes: bytes, seek_sec: float = 2.0, blur: str = "none",
+) -> bytes | None:
     """Extract a single frame from video at seek_sec using FFmpeg.
 
     Returns JPEG bytes resized to max 320px wide, compressed under 200KB,
-    or None if extraction fails.
+    or None if extraction fails.  Optionally applies blur.
     """
     tmp_in = None
     tmp_out = None
@@ -170,12 +179,17 @@ def _extract_video_thumbnail(video_bytes: bytes, seek_sec: float = 2.0) -> bytes
         tmp_out = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         tmp_out.close()
 
+        vf_parts = ["scale=320:-2"]
+        blur_filter = BLUR_FILTERS.get(blur)
+        if blur_filter:
+            vf_parts.append(blur_filter)
+
         cmd = [
             "ffmpeg", "-y",
             "-ss", str(seek_sec),
             "-i", tmp_in.name,
             "-frames:v", "1",
-            "-vf", "scale=320:-2",
+            "-vf", ",".join(vf_parts),
             "-q:v", "5",
             tmp_out.name,
         ]
@@ -185,7 +199,7 @@ def _extract_video_thumbnail(video_bytes: bytes, seek_sec: float = 2.0) -> bytes
         if proc.returncode != 0:
             # If seek is past video end, retry at 0s
             if seek_sec > 0:
-                return _extract_video_thumbnail(video_bytes, seek_sec=0)
+                return _extract_video_thumbnail(video_bytes, seek_sec=0, blur=blur)
             logger.warning("FFmpeg frame extraction failed: %s", proc.stderr[:300])
             return None
 
@@ -217,6 +231,7 @@ def _extract_video_thumbnail(video_bytes: bytes, seek_sec: float = 2.0) -> bytes
 
 async def _auto_thumbnail(
     token: str, storage_group_id: int, media_type: str, file_bytes: bytes,
+    blur: str = "none",
 ) -> str | None:
     """Auto-generate a thumbnail for videos by extracting a frame.
 
@@ -228,7 +243,7 @@ async def _auto_thumbnail(
     try:
         loop = asyncio.get_event_loop()
         thumb_bytes = await loop.run_in_executor(
-            None, _extract_video_thumbnail, file_bytes, 2.0,
+            None, _extract_video_thumbnail, file_bytes, 2.0, blur,
         )
         if not thumb_bytes:
             return None
@@ -253,9 +268,10 @@ async def _auto_thumbnail(
 async def upload_file(
     file: UploadFile = File(...),
     bot_id: Optional[int] = Query(None, description="Bot ID to use for upload (default: first active bot)"),
+    blur: Optional[str] = Query(None, description="Blur level for auto-thumbnail: light, medium, heavy"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload any file to the Telegram Storage Group."""
+    """Upload any file to the Telegram Storage Group.""
     ct = file.content_type or "application/octet-stream"
     media_type = _detect_media_type(ct)
 
@@ -338,6 +354,7 @@ async def upload_file(
         "height": info.get("height"),
         "thumbnail_file_id": await _auto_thumbnail(
             bot.bot_token, storage_group_id, media_type, file_bytes,
+            blur=blur or "none",
         ),
     }
 

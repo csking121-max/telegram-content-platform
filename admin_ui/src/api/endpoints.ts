@@ -493,9 +493,13 @@ export const purgeDlq = (queue: string) =>
 
 /* ── Content Factory ───────────────────────────────────── */
 
-export const uploadVideo = (file: File, onProgress?: (pct: number) => void, botId?: number) =>
-  apiClient
-    .post(`/admin/content-factory/upload${botId ? `?bot_id=${botId}` : ""}`, (() => { const fd = new FormData(); fd.append("file", file); return fd; })(), {
+export const uploadVideo = (file: File, onProgress?: (pct: number) => void, botId?: number, blur?: string) => {
+  const params = new URLSearchParams();
+  if (botId) params.set("bot_id", String(botId));
+  if (blur && blur !== "none") params.set("blur", blur);
+  const qs = params.toString();
+  return apiClient
+    .post(`/admin/content-factory/upload${qs ? `?${qs}` : ""}`, (() => { const fd = new FormData(); fd.append("file", file); return fd; })(), {
       headers: { "Content-Type": undefined },
       timeout: 600_000,
       onUploadProgress: (e) => {
@@ -503,6 +507,7 @@ export const uploadVideo = (file: File, onProgress?: (pct: number) => void, botI
       },
     })
     .then((r) => r.data);
+};
 
 export const uploadThumbnail = (file: File) => {
   const fd = new FormData();

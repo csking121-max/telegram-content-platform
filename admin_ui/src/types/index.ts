@@ -219,6 +219,7 @@ export interface UploadedVideo {
   credit_per_item: number;
   upload_bot_id: number;
   bot_id: number;
+  blur: string;
   thumbnail_file_id?: string;
   uploading: boolean;
   uploaded: boolean;  // true once upload to TG succeeded
