@@ -180,9 +180,9 @@ export default function ContentFactory() {
   const [editingThumbId, setEditingThumbId] = useState<number | null>(null);
   const [editingThumbName, setEditingThumbName] = useState("");
 
-  // Upload & delivery bot selection
-  const [uploadBotId, setUploadBotId] = useState(defaults.uploadBotId ?? 0);
-  const [deliveryBotId, setDeliveryBotId] = useState(defaults.deliveryBotId ?? 0);
+  // Default bot IDs for newly staged files (from saved defaults)
+  const defaultUploadBotId = defaults.uploadBotId ?? 0;
+  const defaultDeliveryBotId = defaults.deliveryBotId ?? 0;
 
   // Group mode settings
   const [groupTitle, setGroupTitle] = useState("Content Pack");
@@ -264,7 +264,8 @@ export default function ContentFactory() {
   // Stage files without uploading — user picks bots first, then clicks "Start Upload"
   const handleFiles = useCallback(
     (files: FileList | File[]) => {
-      const defaultBotId = deliveryBotId || (bots.length > 0 ? bots[0].id : 0);
+      const defUpload = defaultUploadBotId || (bots.length > 0 ? bots[0].id : 0);
+      const defDelivery = defaultDeliveryBotId || (bots.length > 0 ? bots[0].id : 0);
       const newVideos: UploadedVideo[] = [];
 
       for (const file of Array.from(files)) {
@@ -288,7 +289,8 @@ export default function ContentFactory() {
           credit_cost: 0,
           credit_mode: "per_item",
           credit_per_item: 1,
-          bot_id: defaultBotId,
+          upload_bot_id: defUpload,
+          bot_id: defDelivery,
           uploading: false,
           uploaded: false,
         };
@@ -297,10 +299,10 @@ export default function ContentFactory() {
 
       setVideos((prev) => [...prev, ...newVideos]);
     },
-    [bots, deliveryBotId],
+    [bots, defaultUploadBotId, defaultDeliveryBotId],
   );
 
-  // Upload staged files to Telegram using the selected upload bot
+  // Upload staged files to Telegram — each item uses its own upload_bot_id
   const handleStartUpload = useCallback(async () => {
     const staged = videos.filter((v) => !v.uploaded && !v.uploading && v.file);
     if (staged.length === 0) return;
@@ -313,7 +315,7 @@ export default function ContentFactory() {
     for (const v of staged) {
       if (!v.file) continue;
       try {
-        const result = await uploadVideo(v.file, undefined, uploadBotId || undefined);
+        const result = await uploadVideo(v.file, undefined, v.upload_bot_id || undefined);
         setVideos((prev) =>
           prev.map((x) =>
             x.id === v.id
@@ -347,7 +349,7 @@ export default function ContentFactory() {
         );
       }
     }
-  }, [videos, uploadBotId]);
+  }, [videos]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -467,7 +469,7 @@ export default function ContentFactory() {
           credit_cost: mode === "group" ? groupCreditCost : v.credit_cost,
           credit_mode: mode === "group" ? groupCreditMode : v.credit_mode,
           credit_per_item: mode === "group" ? groupCreditPerItem : v.credit_per_item,
-          bot_id: mode === "group" ? groupBotId : (deliveryBotId || v.bot_id),
+          bot_id: mode === "group" ? groupBotId : v.bot_id,
           thumbnail_file_id: thumbId,
         };
       });
@@ -486,7 +488,7 @@ export default function ContentFactory() {
           credit_cost: groupCreditCost,
           credit_mode: groupCreditMode,
           credit_per_item: groupCreditPerItem,
-          bot_id: deliveryBotId || groupBotId,
+          bot_id: groupBotId,
           thumbnail_file_id: groupThumbId || null,
         };
       }
@@ -749,8 +751,8 @@ export default function ContentFactory() {
                 groupCreditCost,
                 groupCreditMode,
                 groupCreditPerItem,
-                uploadBotId,
-                deliveryBotId,
+                uploadBotId: defaultUploadBotId,
+                deliveryBotId: defaultDeliveryBotId,
               });
               alert("Defaults saved!");
             }}
@@ -760,44 +762,6 @@ export default function ContentFactory() {
           </button>
         </div>
         <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
-          <div>
-            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Upload Bot</label>
-            <select
-              value={uploadBotId}
-              onChange={(e) => setUploadBotId(Number(e.target.value))}
-              style={{ ...select_, width: 200 }}
-            >
-              <option value={0}>Auto (first active)</option>
-              {bots.map((b) => (
-                <option key={b.id} value={b.id}>@{b.bot_username}</option>
-              ))}
-            </select>
-            <p style={{ fontSize: 11, color: "#888", margin: "2px 0 0" }}>Bot that uploads to storage group</p>
-          </div>
-          <div>
-            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Delivery Bot</label>
-            <select
-              value={deliveryBotId}
-              onChange={(e) => setDeliveryBotId(Number(e.target.value))}
-              style={{ ...select_, width: 200 }}
-            >
-              <option value={0}>Per-item (see table)</option>
-              {bots.map((b) => (
-                <option key={b.id} value={b.id}>@{b.bot_username}</option>
-              ))}
-            </select>
-            <p style={{ fontSize: 11, color: "#888", margin: "2px 0 0" }}>Bot that delivers to users</p>
-          </div>
-          {uploadBotId > 0 && deliveryBotId > 0 && uploadBotId === deliveryBotId && (
-            <div style={{ padding: "6px 12px", background: "#f0fff4", borderRadius: 6, border: "1px solid #c3e6cb", fontSize: 12, color: "#2d7a3a" }}>
-              ⚡ Same bot — instant <code>copy_message</code> delivery!
-            </div>
-          )}
-          {uploadBotId > 0 && deliveryBotId > 0 && uploadBotId !== deliveryBotId && (
-            <div style={{ padding: "6px 12px", background: "#fffbea", borderRadius: 6, border: "1px solid #fce588", fontSize: 12, color: "#b8860b" }}>
-              🐢 Different bots — will use proxy (slower for large files)
-            </div>
-          )}
           <div>
             <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Publish Rate</label>
             <select
@@ -978,16 +942,9 @@ export default function ContentFactory() {
                 ? `⏳ Uploading ${uploadingVideos.length} file${uploadingVideos.length > 1 ? "s" : ""}…`
                 : `📂 ${stagedVideos.length} file${stagedVideos.length > 1 ? "s" : ""} staged`}
             </span>
-            {uploadBotId > 0 && (
-              <span style={{ fontSize: 12, color: "#555", marginLeft: 12 }}>
-                via @{bots.find((b) => b.id === uploadBotId)?.bot_username || "?"}
-              </span>
-            )}
-            {!uploadBotId && (
-              <span style={{ fontSize: 12, color: "#888", marginLeft: 12 }}>
-                via auto (first active bot)
-              </span>
-            )}
+            <span style={{ fontSize: 12, color: "#888", marginLeft: 12 }}>
+              (each file uses its own upload bot)
+            </span>
           </div>
           <button
             onClick={handleStartUpload}
@@ -1083,10 +1040,19 @@ export default function ContentFactory() {
                   ))}
                 </select>
                 <select
-                  onChange={(e) => { if (e.target.value) applyToAll("bot_id", Number(e.target.value)); e.target.value = ""; }}
-                  style={{ ...select_, width: 140 }}
+                  onChange={(e) => { if (e.target.value) applyToAll("upload_bot_id", Number(e.target.value)); e.target.value = ""; }}
+                  style={{ ...select_, width: 155 }}
                 >
-                  <option value="">Set all bots…</option>
+                  <option value="">Set all upload bots…</option>
+                  {bots.map((b) => (
+                    <option key={b.id} value={b.id}>@{b.bot_username}</option>
+                  ))}
+                </select>
+                <select
+                  onChange={(e) => { if (e.target.value) applyToAll("bot_id", Number(e.target.value)); e.target.value = ""; }}
+                  style={{ ...select_, width: 160 }}
+                >
+                  <option value="">Set all delivery bots…</option>
                   {bots.map((b) => (
                     <option key={b.id} value={b.id}>@{b.bot_username}</option>
                   ))}
@@ -1117,7 +1083,8 @@ export default function ContentFactory() {
                     <th style={thStyle}>Category</th>
                     <th style={thStyle}>Credit Mode</th>
                     <th style={thStyle}>Cost</th>
-                    <th style={thStyle}>Bot</th>
+                    <th style={thStyle}>Upload Bot</th>
+                    <th style={thStyle}>Delivery Bot</th>
                     <th style={thStyle}>Thumbnail</th>
                   </>
                 )}
@@ -1178,6 +1145,20 @@ export default function ContentFactory() {
                       </td>
                       <td style={tdStyle}>
                         <select
+                          value={v.upload_bot_id}
+                          onChange={(e) => updateVideo(v.id, { upload_bot_id: Number(e.target.value) })}
+                          style={{ ...select_, minWidth: 110 }}
+                          disabled={v.uploaded}
+                          title={v.uploaded ? "Already uploaded" : "Bot used to upload to storage"}
+                        >
+                          <option value={0}>Auto</option>
+                          {bots.map((b) => (
+                            <option key={b.id} value={b.id}>@{b.bot_username}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={tdStyle}>
+                        <select
                           value={v.bot_id}
                           onChange={(e) => updateVideo(v.id, { bot_id: Number(e.target.value) })}
                           style={{ ...select_, minWidth: 110 }}
@@ -1186,6 +1167,12 @@ export default function ContentFactory() {
                             <option key={b.id} value={b.id}>@{b.bot_username}</option>
                           ))}
                         </select>
+                        {v.uploaded && v.upload_bot_id > 0 && v.upload_bot_id === v.bot_id && (
+                          <span style={{ fontSize: 10, color: "#2d7a3a" }} title="Same bot = instant copy_message">⚡</span>
+                        )}
+                        {v.uploaded && v.upload_bot_id > 0 && v.upload_bot_id !== v.bot_id && (
+                          <span style={{ fontSize: 10, color: "#b8860b" }} title="Different bots = proxy (slower)">🐢</span>
+                        )}
                       </td>
                       <td style={tdStyle}>
                         <ThumbSelector

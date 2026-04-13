@@ -217,6 +217,7 @@ export interface UploadedVideo {
   credit_cost: number;
   credit_mode: string;
   credit_per_item: number;
+  upload_bot_id: number;
   bot_id: number;
   thumbnail_file_id?: string;
   uploading: boolean;
