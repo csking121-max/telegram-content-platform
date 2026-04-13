@@ -493,9 +493,9 @@ export const purgeDlq = (queue: string) =>
 
 /* ── Content Factory ───────────────────────────────────── */
 
-export const uploadVideo = (file: File, onProgress?: (pct: number) => void) =>
+export const uploadVideo = (file: File, onProgress?: (pct: number) => void, botId?: number) =>
   apiClient
-    .post("/admin/content-factory/upload", (() => { const fd = new FormData(); fd.append("file", file); return fd; })(), {
+    .post(`/admin/content-factory/upload${botId ? `?bot_id=${botId}` : ""}`, (() => { const fd = new FormData(); fd.append("file", file); return fd; })(), {
       headers: { "Content-Type": undefined },
       timeout: 600_000,
       onUploadProgress: (e) => {

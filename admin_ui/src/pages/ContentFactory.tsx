@@ -27,6 +27,31 @@ let _idCounter = 0;
 const uid = () => `v_${++_idCounter}_${Date.now()}`;
 
 const STORAGE_KEY = "cf_uploads";
+const DEFAULTS_KEY = "cf_publish_defaults";
+
+interface PublishDefaults {
+  mode: "solo" | "group";
+  ratePerMinute: number;
+  deletionSeconds: number;
+  groupCategory: string;
+  groupCreditCost: number;
+  groupCreditMode: string;
+  groupCreditPerItem: number;
+  uploadBotId: number;
+  deliveryBotId: number;
+}
+
+function loadDefaults(): Partial<PublishDefaults> {
+  try {
+    const raw = localStorage.getItem(DEFAULTS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Partial<PublishDefaults>;
+  } catch { return {}; }
+}
+
+function saveDefaults(d: PublishDefaults) {
+  try { localStorage.setItem(DEFAULTS_KEY, JSON.stringify(d)); } catch { /* ignore */ }
+}
 
 function loadSavedUploads(): UploadedVideo[] {
   try {
@@ -36,7 +61,7 @@ function loadSavedUploads(): UploadedVideo[] {
     // Drop items still marked as uploading (interrupted by tab switch)
     return items
       .filter((v) => !v.uploading && !v.error && v.storage_message_id > 0)
-      .map((v) => ({ ...v, uploading: false }));
+      .map((v) => ({ ...v, uploading: false, uploaded: true, file: null }));
   } catch {
     return [];
   }
@@ -44,7 +69,9 @@ function loadSavedUploads(): UploadedVideo[] {
 
 function saveUploads(items: UploadedVideo[]) {
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    // Only persist uploaded items — staged files have File objects that can't be serialized
+    const saveable = items.filter((v) => v.uploaded && !v.error && v.storage_message_id > 0);
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(saveable));
   } catch { /* quota exceeded — ignore */ }
 }
 
@@ -131,14 +158,15 @@ const tdStyle: React.CSSProperties = {
 /* ── component ─────────────────────────────────────────── */
 
 export default function ContentFactory() {
+  const defaults = loadDefaults();
   const [videos, setVideos] = useState<UploadedVideo[]>(loadSavedUploads);
   const [categories, setCategories] = useState<ContentCategory[]>([]);
   const [bots, setBots] = useState<Bot[]>([]);
-  const [mode, setMode] = useState<"solo" | "group">("solo");
+  const [mode, setMode] = useState<"solo" | "group">(defaults.mode || "solo");
   const [dragging, setDragging] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [ratePerMinute, setRatePerMinute] = useState(0); // 0 = send all at once
-  const [deletionSeconds, setDeletionSeconds] = useState(0);
+  const [ratePerMinute, setRatePerMinute] = useState(defaults.ratePerMinute ?? 0);
+  const [deletionSeconds, setDeletionSeconds] = useState(defaults.deletionSeconds ?? 0);
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -152,12 +180,16 @@ export default function ContentFactory() {
   const [editingThumbId, setEditingThumbId] = useState<number | null>(null);
   const [editingThumbName, setEditingThumbName] = useState("");
 
+  // Upload & delivery bot selection
+  const [uploadBotId, setUploadBotId] = useState(defaults.uploadBotId ?? 0);
+  const [deliveryBotId, setDeliveryBotId] = useState(defaults.deliveryBotId ?? 0);
+
   // Group mode settings
   const [groupTitle, setGroupTitle] = useState("Content Pack");
-  const [groupCategory, setGroupCategory] = useState("free");
-  const [groupCreditCost, setGroupCreditCost] = useState(0);
-  const [groupCreditMode, setGroupCreditMode] = useState("per_item");
-  const [groupCreditPerItem, setGroupCreditPerItem] = useState(1);
+  const [groupCategory, setGroupCategory] = useState(defaults.groupCategory || "free");
+  const [groupCreditCost, setGroupCreditCost] = useState(defaults.groupCreditCost ?? 0);
+  const [groupCreditMode, setGroupCreditMode] = useState(defaults.groupCreditMode || "per_item");
+  const [groupCreditPerItem, setGroupCreditPerItem] = useState(defaults.groupCreditPerItem ?? 1);
   const [groupBotId, setGroupBotId] = useState(0);
   const [groupThumbId, setGroupThumbId] = useState("");
 
@@ -180,7 +212,9 @@ export default function ContentFactory() {
     getActiveBots()
       .then((b) => {
         setBots(b);
-        if (b.length > 0) setGroupBotId(b[0].id);
+        if (b.length > 0) {
+          setGroupBotId(defaults.deliveryBotId || b[0].id);
+        }
       })
       .catch(() => setBots([]));
     getDefaultThumbnails().then(setDefaultThumbs).catch(() => {});
@@ -227,9 +261,10 @@ export default function ContentFactory() {
 
   /* ── file handling ──────────────────────────────── */
 
+  // Stage files without uploading — user picks bots first, then clicks "Start Upload"
   const handleFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const defaultBotId = bots.length > 0 ? bots[0].id : 0;
+    (files: FileList | File[]) => {
+      const defaultBotId = deliveryBotId || (bots.length > 0 ? bots[0].id : 0);
       const newVideos: UploadedVideo[] = [];
 
       for (const file of Array.from(files)) {
@@ -243,6 +278,7 @@ export default function ContentFactory() {
         const v: UploadedVideo = {
           id: uid(),
           filename: file.name,
+          file,
           storage_chat_id: 0,
           storage_message_id: 0,
           file_id: "",
@@ -253,52 +289,65 @@ export default function ContentFactory() {
           credit_mode: "per_item",
           credit_per_item: 1,
           bot_id: defaultBotId,
-          uploading: true,
+          uploading: false,
+          uploaded: false,
         };
         newVideos.push(v);
       }
 
       setVideos((prev) => [...prev, ...newVideos]);
-
-      const fileArr = Array.from(files);
-      for (let i = 0; i < fileArr.length; i++) {
-        const v = newVideos[i];
-        try {
-          const result = await uploadVideo(fileArr[i]);
-          setVideos((prev) =>
-            prev.map((x) =>
-              x.id === v.id
-                ? {
-                    ...x,
-                    storage_chat_id: result.storage_chat_id,
-                    storage_message_id: result.storage_message_id,
-                    file_id: result.file_id,
-                    duration: result.duration,
-                    width: result.width,
-                    height: result.height,
-                    uploading: false,
-                  }
-                : x,
-            ),
-          );
-        } catch (err: unknown) {
-          let msg = "Upload failed";
-          if (err && typeof err === "object" && "response" in err) {
-            const resp = (err as { response?: { data?: { detail?: string }; status?: number } }).response;
-            msg = resp?.data?.detail || `Upload failed (HTTP ${resp?.status})`;
-          } else if (err instanceof Error) {
-            msg = err.message;
-          }
-          setVideos((prev) =>
-            prev.map((x) =>
-              x.id === v.id ? { ...x, uploading: false, error: msg } : x,
-            ),
-          );
-        }
-      }
     },
-    [bots],
+    [bots, deliveryBotId],
   );
+
+  // Upload staged files to Telegram using the selected upload bot
+  const handleStartUpload = useCallback(async () => {
+    const staged = videos.filter((v) => !v.uploaded && !v.uploading && v.file);
+    if (staged.length === 0) return;
+
+    // Mark all staged as uploading
+    setVideos((prev) =>
+      prev.map((v) => (v.file && !v.uploaded ? { ...v, uploading: true } : v)),
+    );
+
+    for (const v of staged) {
+      if (!v.file) continue;
+      try {
+        const result = await uploadVideo(v.file, undefined, uploadBotId || undefined);
+        setVideos((prev) =>
+          prev.map((x) =>
+            x.id === v.id
+              ? {
+                  ...x,
+                  storage_chat_id: result.storage_chat_id,
+                  storage_message_id: result.storage_message_id,
+                  file_id: result.file_id,
+                  duration: result.duration,
+                  width: result.width,
+                  height: result.height,
+                  uploading: false,
+                  uploaded: true,
+                  file: null,
+                }
+              : x,
+          ),
+        );
+      } catch (err: unknown) {
+        let msg = "Upload failed";
+        if (err && typeof err === "object" && "response" in err) {
+          const resp = (err as { response?: { data?: { detail?: string }; status?: number } }).response;
+          msg = resp?.data?.detail || `Upload failed (HTTP ${resp?.status})`;
+        } else if (err instanceof Error) {
+          msg = err.message;
+        }
+        setVideos((prev) =>
+          prev.map((x) =>
+            x.id === v.id ? { ...x, uploading: false, error: msg } : x,
+          ),
+        );
+      }
+    }
+  }, [videos, uploadBotId]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -393,26 +442,35 @@ export default function ContentFactory() {
 
   /* ── publish ────────────────────────────────────── */
 
-  const readyVideos = videos.filter((v) => !v.uploading && !v.error && v.storage_message_id > 0);
+  const readyVideos = videos.filter((v) => v.uploaded && !v.error && v.storage_message_id > 0);
+  const stagedVideos = videos.filter((v) => !v.uploaded && !v.uploading && !v.error && v.file);
+  const uploadingVideos = videos.filter((v) => v.uploading);
 
   const handlePublish = async () => {
     if (readyVideos.length === 0) return;
     setPublishing(true);
 
     try {
-      const items = readyVideos.map((v) => ({
-        storage_chat_id: v.storage_chat_id,
-        storage_message_id: v.storage_message_id,
-        file_id: v.file_id || null,
-        media_type: v.media_type,
-        title: v.title,
-        access_type: mode === "group" ? groupCategory : v.access_type,
-        credit_cost: mode === "group" ? groupCreditCost : v.credit_cost,
-        credit_mode: mode === "group" ? groupCreditMode : v.credit_mode,
-        credit_per_item: mode === "group" ? groupCreditPerItem : v.credit_per_item,
-        bot_id: mode === "group" ? groupBotId : v.bot_id,
-        thumbnail_file_id: mode === "group" ? groupThumbId || null : v.thumbnail_file_id || null,
-      }));
+      const items = readyVideos.map((v) => {
+        // Auto-thumbnail: if no thumbnail set, use the content's own file_id
+        const thumbId = mode === "group"
+          ? (groupThumbId || v.file_id || null)
+          : (v.thumbnail_file_id || v.file_id || null);
+
+        return {
+          storage_chat_id: v.storage_chat_id,
+          storage_message_id: v.storage_message_id,
+          file_id: v.file_id || null,
+          media_type: v.media_type,
+          title: v.title,
+          access_type: mode === "group" ? groupCategory : v.access_type,
+          credit_cost: mode === "group" ? groupCreditCost : v.credit_cost,
+          credit_mode: mode === "group" ? groupCreditMode : v.credit_mode,
+          credit_per_item: mode === "group" ? groupCreditPerItem : v.credit_per_item,
+          bot_id: mode === "group" ? groupBotId : (deliveryBotId || v.bot_id),
+          thumbnail_file_id: thumbId,
+        };
+      });
 
       const payload: Parameters<typeof publishContent>[0] = {
         mode,
@@ -428,7 +486,7 @@ export default function ContentFactory() {
           credit_cost: groupCreditCost,
           credit_mode: groupCreditMode,
           credit_per_item: groupCreditPerItem,
-          bot_id: groupBotId,
+          bot_id: deliveryBotId || groupBotId,
           thumbnail_file_id: groupThumbId || null,
         };
       }
@@ -679,8 +737,67 @@ export default function ContentFactory() {
 
       {/* ── Publish Settings (always visible) ── */}
       <div style={card}>
-        <h3 style={{ margin: "0 0 12px" }}>⚙️ Publish Settings</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>⚙️ Publish Settings</h3>
+          <button
+            onClick={() => {
+              saveDefaults({
+                mode,
+                ratePerMinute,
+                deletionSeconds,
+                groupCategory,
+                groupCreditCost,
+                groupCreditMode,
+                groupCreditPerItem,
+                uploadBotId,
+                deliveryBotId,
+              });
+              alert("Defaults saved!");
+            }}
+            style={{ ...btn, padding: "6px 14px", fontSize: 12, background: "#f0f0f0", border: "1px solid #ccc" }}
+          >
+            💾 Set as Default
+          </button>
+        </div>
         <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Upload Bot</label>
+            <select
+              value={uploadBotId}
+              onChange={(e) => setUploadBotId(Number(e.target.value))}
+              style={{ ...select_, width: 200 }}
+            >
+              <option value={0}>Auto (first active)</option>
+              {bots.map((b) => (
+                <option key={b.id} value={b.id}>@{b.bot_username}</option>
+              ))}
+            </select>
+            <p style={{ fontSize: 11, color: "#888", margin: "2px 0 0" }}>Bot that uploads to storage group</p>
+          </div>
+          <div>
+            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Delivery Bot</label>
+            <select
+              value={deliveryBotId}
+              onChange={(e) => setDeliveryBotId(Number(e.target.value))}
+              style={{ ...select_, width: 200 }}
+            >
+              <option value={0}>Per-item (see table)</option>
+              {bots.map((b) => (
+                <option key={b.id} value={b.id}>@{b.bot_username}</option>
+              ))}
+            </select>
+            <p style={{ fontSize: 11, color: "#888", margin: "2px 0 0" }}>Bot that delivers to users</p>
+          </div>
+          {uploadBotId > 0 && deliveryBotId > 0 && uploadBotId === deliveryBotId && (
+            <div style={{ padding: "6px 12px", background: "#f0fff4", borderRadius: 6, border: "1px solid #c3e6cb", fontSize: 12, color: "#2d7a3a" }}>
+              ⚡ Same bot — instant <code>copy_message</code> delivery!
+            </div>
+          )}
+          {uploadBotId > 0 && deliveryBotId > 0 && uploadBotId !== deliveryBotId && (
+            <div style={{ padding: "6px 12px", background: "#fffbea", borderRadius: 6, border: "1px solid #fce588", fontSize: 12, color: "#b8860b" }}>
+              🐢 Different bots — will use proxy (slower for large files)
+            </div>
+          )}
           <div>
             <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Publish Rate</label>
             <select
@@ -851,6 +968,41 @@ export default function ContentFactory() {
           onChange={onFileInput}
         />
       </div>
+
+      {/* ── Upload Control (shown when files are staged) ── */}
+      {(stagedVideos.length > 0 || uploadingVideos.length > 0) && (
+        <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f0f7ff", border: "1px solid #c5dcf5" }}>
+          <div>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>
+              {uploadingVideos.length > 0
+                ? `⏳ Uploading ${uploadingVideos.length} file${uploadingVideos.length > 1 ? "s" : ""}…`
+                : `📂 ${stagedVideos.length} file${stagedVideos.length > 1 ? "s" : ""} staged`}
+            </span>
+            {uploadBotId > 0 && (
+              <span style={{ fontSize: 12, color: "#555", marginLeft: 12 }}>
+                via @{bots.find((b) => b.id === uploadBotId)?.bot_username || "?"}
+              </span>
+            )}
+            {!uploadBotId && (
+              <span style={{ fontSize: 12, color: "#888", marginLeft: 12 }}>
+                via auto (first active bot)
+              </span>
+            )}
+          </div>
+          <button
+            onClick={handleStartUpload}
+            disabled={uploadingVideos.length > 0 || stagedVideos.length === 0}
+            style={{
+              ...btnPrimary,
+              padding: "10px 24px",
+              fontSize: 15,
+              opacity: uploadingVideos.length > 0 ? 0.6 : 1,
+            }}
+          >
+            {uploadingVideos.length > 0 ? "⏳ Uploading…" : "🚀 Start Upload"}
+          </button>
+        </div>
+      )}
 
       {/* ── Group Mode Settings (shown when group mode selected and files uploaded) ── */}
       {videos.length > 0 && mode === "group" && (
@@ -1052,10 +1204,13 @@ export default function ContentFactory() {
                         ❌ {v.error.length > 30 ? v.error.slice(0, 30) + "…" : v.error}
                       </span>
                     )}
-                    {!v.uploading && !v.error && v.storage_message_id > 0 && (
+                    {!v.uploading && !v.error && v.uploaded && v.storage_message_id > 0 && (
                       <span style={{ color: "#2ecc71" }}>
                         ✅ {v.media_type === "video" ? "🎬" : v.media_type === "photo" ? "🖼️" : v.media_type === "animation" ? "🎞️" : "📄"} Ready
                       </span>
+                    )}
+                    {!v.uploading && !v.error && !v.uploaded && (
+                      <span style={{ color: "#888" }}>📂 Staged</span>
                     )}
                   </td>
 

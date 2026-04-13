@@ -204,6 +204,7 @@ export interface PlatformSetting {
 export interface UploadedVideo {
   id: string;
   filename: string;
+  file: File | null;  // kept until upload completes
   storage_chat_id: number;
   storage_message_id: number;
   file_id: string;
@@ -219,6 +220,7 @@ export interface UploadedVideo {
   bot_id: number;
   thumbnail_file_id?: string;
   uploading: boolean;
+  uploaded: boolean;  // true once upload to TG succeeded
   error?: string;
 }
 

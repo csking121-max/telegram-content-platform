@@ -157,13 +157,20 @@ def _tg_method_for_type(media_type: str) -> tuple[str, str]:
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
+    bot_id: Optional[int] = Query(None, description="Bot ID to use for upload (default: first active bot)"),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload any file to the Telegram Storage Group."""
     ct = file.content_type or "application/octet-stream"
     media_type = _detect_media_type(ct)
 
-    bot = await _get_first_active_bot(db)
+    if bot_id:
+        svc = BotService(db)
+        bot = await svc.get_by_id(bot_id)
+        if not bot:
+            raise HTTPException(404, f"Bot ID {bot_id} not found")
+    else:
+        bot = await _get_first_active_bot(db)
     storage_group_id = await _get_storage_group_id(db)
 
     file_bytes = await file.read()
