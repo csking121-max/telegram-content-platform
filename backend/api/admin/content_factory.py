@@ -271,7 +271,7 @@ async def upload_file(
     blur: Optional[str] = Query(None, description="Blur level for auto-thumbnail: light, medium, heavy"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload any file to the Telegram Storage Group.""
+    """Upload any file to the Telegram Storage Group."""
     ct = file.content_type or "application/octet-stream"
     media_type = _detect_media_type(ct)
 
@@ -558,7 +558,7 @@ async def _update_job(job_id: str, **fields):
 
 
 async def _append_result(job_id: str, result_item: dict, completed_delta: int = 0, failed_delta: int = 0):
-    """Append a result to the job's results list in DB."""
+    """Append a result to the job results list in DB."""
     async with AsyncSessionLocal() as db:
         row = await db.get(PublishJob, job_id)
         if not row:
@@ -784,7 +784,7 @@ async def list_jobs(db: AsyncSession = Depends(get_db)):
 
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
-    """Get a specific publish job's status and results."""
+    """Get a specific publish job status and results."""
     job = await db.get(PublishJob, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
