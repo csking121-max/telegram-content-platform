@@ -498,10 +498,13 @@ export const uploadVideo = (file: File, onProgress?: (pct: number) => void, botI
   if (botId) params.set("bot_id", String(botId));
   if (blur && blur !== "none") params.set("blur", blur);
   const qs = params.toString();
+  // Dynamic timeout: 10 min base + 1 min per 10 MB (e.g. 500 MB → 60 min)
+  const sizeMB = file.size / (1024 * 1024);
+  const timeoutMs = Math.max(600_000, 600_000 + Math.ceil(sizeMB / 10) * 60_000);
   return apiClient
     .post(`/admin/content-factory/upload${qs ? `?${qs}` : ""}`, (() => { const fd = new FormData(); fd.append("file", file); return fd; })(), {
       headers: { "Content-Type": undefined },
-      timeout: 600_000,
+      timeout: timeoutMs,
       onUploadProgress: (e) => {
         if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
       },
