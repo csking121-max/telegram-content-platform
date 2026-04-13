@@ -182,20 +182,16 @@ BLUR_FILTERS = {
 
 
 def _extract_video_thumbnail(
-    video_bytes: bytes, seek_sec: float = 2.0, blur: str = "none",
+    video_path: str, seek_sec: float = 2.0, blur: str = "none",
 ) -> bytes | None:
     """Extract a single frame from video at seek_sec using FFmpeg.
 
     Returns JPEG bytes resized to max 320px wide, compressed under 200KB,
     or None if extraction fails.  Optionally applies blur.
+    Accepts a file path (not bytes) to avoid holding video in memory.
     """
-    tmp_in = None
     tmp_out = None
     try:
-        tmp_in = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-        tmp_in.write(video_bytes)
-        tmp_in.close()
-
         tmp_out = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
         tmp_out.close()
 
@@ -207,7 +203,7 @@ def _extract_video_thumbnail(
         cmd = [
             "ffmpeg", "-y",
             "-ss", str(seek_sec),
-            "-i", tmp_in.name,
+            "-i", video_path,
             "-frames:v", "1",
             "-vf", ",".join(vf_parts),
             "-q:v", "5",
@@ -219,7 +215,7 @@ def _extract_video_thumbnail(
         if proc.returncode != 0:
             # If seek is past video end, retry at 0s
             if seek_sec > 0:
-                return _extract_video_thumbnail(video_bytes, seek_sec=0, blur=blur)
+                return _extract_video_thumbnail(video_path, seek_sec=0, blur=blur)
             logger.warning("FFmpeg frame extraction failed: %s", proc.stderr[:300])
             return None
 
@@ -241,29 +237,29 @@ def _extract_video_thumbnail(
         logger.warning("Thumbnail extraction error: %s", e)
         return None
     finally:
-        for f in (tmp_in, tmp_out):
-            if f:
-                try:
-                    os.unlink(f.name)
-                except OSError:
-                    pass
+        if tmp_out:
+            try:
+                os.unlink(tmp_out.name)
+            except OSError:
+                pass
 
 
 async def _auto_thumbnail(
-    token: str, storage_group_id: int, media_type: str, file_bytes: bytes,
-    blur: str = "none",
+    token: str, storage_group_id: int, media_type: str,
+    video_path: str | None = None, blur: str = "none",
 ) -> str | None:
     """Auto-generate a thumbnail for videos by extracting a frame.
 
     For photos, return None (photo file_id can be used directly).
     Runs FFmpeg in a thread to avoid blocking the event loop.
+    Uses file path instead of bytes to avoid OOM on large videos.
     """
-    if media_type != "video":
+    if media_type != "video" or not video_path:
         return None
     try:
         loop = asyncio.get_event_loop()
         thumb_bytes = await loop.run_in_executor(
-            None, _extract_video_thumbnail, file_bytes, 2.0, blur,
+            None, _extract_video_thumbnail, video_path, 2.0, blur,
         )
         if not thumb_bytes:
             return None
@@ -304,102 +300,126 @@ async def upload_file(
         bot = await _get_first_active_bot(db)
     storage_group_id = await _get_storage_group_id(db)
 
-    file_bytes = await file.read()
-    size_mb = len(file_bytes) / (1024 * 1024)
-    if size_mb > 2048:
-        raise HTTPException(413, "File must be under 2 GB")
+    # Stream file to disk to avoid OOM on large uploads
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename or "")[1] or ".tmp")
+    try:
+        size = 0
+        while chunk := await file.read(8 * 1024 * 1024):  # 8 MB chunks
+            tmp_file.write(chunk)
+            size += len(chunk)
+        tmp_file.close()
+        tmp_path = tmp_file.name
+        size_mb = size / (1024 * 1024)
 
-    # Check Local Bot API reachability (cached after first check)
-    global _local_api_available
-    if _local_api_available is None and TELEGRAM_LOCAL_API:
-        await _check_local_api()
+        if size_mb > 2048:
+            raise HTTPException(413, "File must be under 2 GB")
 
-    use_local = size_mb > 50 and TELEGRAM_LOCAL_API and _local_api_available
-    api_base = TELEGRAM_LOCAL_API if use_local else TELEGRAM_API
-    if use_local:
-        logger.info("Large file %.1f MB — routing through Local Bot API", size_mb)
-    elif size_mb > 50:
-        logger.warning(
-            "Large file %.1f MB but Local Bot API unavailable — trying cloud API (may fail for >50 MB)",
-            size_mb,
+        # Check Local Bot API reachability (cached after first check)
+        global _local_api_available
+        if _local_api_available is None and TELEGRAM_LOCAL_API:
+            await _check_local_api()
+
+        use_local = size_mb > 50 and TELEGRAM_LOCAL_API and _local_api_available
+        api_base = TELEGRAM_LOCAL_API if use_local else TELEGRAM_API
+        if use_local:
+            logger.info("Large file %.1f MB — routing through Local Bot API", size_mb)
+        elif size_mb > 50:
+            logger.warning(
+                "Large file %.1f MB but Local Bot API unavailable — trying cloud API (may fail for >50 MB)",
+                size_mb,
+            )
+
+        tg_method, field_name = _tg_method_for_type(media_type)
+        extra_data: dict = {}
+        if media_type == "video":
+            extra_data["supports_streaming"] = "true"
+
+        upload_timeout = max(120, int(size_mb / 50 * 60) + 60)
+
+        # Read file from disk for the upload (streamed, not all at once for huge files)
+        file_bytes = open(tmp_path, "rb").read()
+
+        upload_kwargs = dict(
+            token=bot.bot_token,
+            method=tg_method,
+            data={"chat_id": str(storage_group_id), **extra_data},
+            files={field_name: (file.filename or "file", file_bytes, ct)},
+            timeout=upload_timeout,
         )
 
-    tg_method, field_name = _tg_method_for_type(media_type)
-    extra_data: dict = {}
-    if media_type == "video":
-        extra_data["supports_streaming"] = "true"
+        # Try up to 2 times: first with chosen API, then fallback
+        result = await _tg_upload_file(**upload_kwargs, api_base=api_base)
 
-    upload_timeout = max(120, int(size_mb / 50 * 60) + 60)
+        # If Local Bot API failed, retry with cloud API
+        if not result and use_local:
+            logger.warning("Local Bot API failed — retrying with cloud API")
+            result = await _tg_upload_file(**upload_kwargs, api_base=TELEGRAM_API)
+            if result and result.get("ok"):
+                logger.info("Cloud API fallback succeeded for %.1f MB file", size_mb)
 
-    upload_kwargs = dict(
-        token=bot.bot_token,
-        method=tg_method,
-        data={"chat_id": str(storage_group_id), **extra_data},
-        files={field_name: (file.filename or "file", file_bytes, ct)},
-        timeout=upload_timeout,
-    )
+        # If cloud API failed, retry once more (transient errors)
+        if not result or not result.get("ok"):
+            logger.info("First attempt failed — retrying upload in 2s")
+            await asyncio.sleep(2)
+            result = await _tg_upload_file(**upload_kwargs, api_base=TELEGRAM_API)
 
-    # Try up to 2 times: first with chosen API, then fallback
-    result = await _tg_upload_file(**upload_kwargs, api_base=api_base)
+        # Free the bytes from memory now that upload is done
+        del file_bytes
 
-    # If Local Bot API failed, retry with cloud API
-    if not result and use_local:
-        logger.warning("Local Bot API failed — retrying with cloud API")
-        result = await _tg_upload_file(**upload_kwargs, api_base=TELEGRAM_API)
-        if result and result.get("ok"):
-            logger.info("Cloud API fallback succeeded for %.1f MB file", size_mb)
+        if not result or not result.get("ok"):
+            desc = result.get("description", "") if result else ""
+            if "Request Entity Too Large" in desc or (not result and size_mb > 50):
+                raise HTTPException(
+                    413,
+                    f"File is {size_mb:.0f} MB — Telegram cloud API supports up to 50 MB. "
+                    "To upload larger files, configure the Local Bot API service "
+                    "(requires TELEGRAM_API_ID and TELEGRAM_API_HASH in .env from my.telegram.org).",
+                )
+            detail = "Failed to upload file to Telegram storage group"
+            if desc:
+                detail += f": {desc}"
+            raise HTTPException(502, detail)
 
-    # If cloud API failed, retry once more (transient errors)
-    if not result or not result.get("ok"):
-        logger.info("First attempt failed — retrying upload in 2s")
-        await asyncio.sleep(2)
-        result = await _tg_upload_file(**upload_kwargs, api_base=TELEGRAM_API)
+        msg = result["result"]
 
-    if not result or not result.get("ok"):
-        desc = result.get("description", "") if result else ""
-        if "Request Entity Too Large" in desc or (not result and size_mb > 50):
-            raise HTTPException(
-                413,
-                f"File is {size_mb:.0f} MB — Telegram cloud API supports up to 50 MB. "
-                "To upload larger files, configure the Local Bot API service "
-                "(requires TELEGRAM_API_ID and TELEGRAM_API_HASH in .env from my.telegram.org).",
-            )
-        detail = "Failed to upload file to Telegram storage group"
-        if desc:
-            detail += f": {desc}"
-        raise HTTPException(502, detail)
+        file_id = ""
+        info: dict = {}
+        if media_type == "video":
+            info = msg.get("video") or {}
+            file_id = info.get("file_id", "")
+        elif media_type == "photo":
+            photos = msg.get("photo") or []
+            file_id = photos[-1]["file_id"] if photos else ""
+        elif media_type == "animation":
+            info = msg.get("animation") or {}
+            file_id = info.get("file_id", "")
+        else:
+            info = msg.get("document") or {}
+            file_id = info.get("file_id", "")
 
-    msg = result["result"]
-
-    file_id = ""
-    info: dict = {}
-    if media_type == "video":
-        info = msg.get("video") or {}
-        file_id = info.get("file_id", "")
-    elif media_type == "photo":
-        photos = msg.get("photo") or []
-        file_id = photos[-1]["file_id"] if photos else ""
-    elif media_type == "animation":
-        info = msg.get("animation") or {}
-        file_id = info.get("file_id", "")
-    else:
-        info = msg.get("document") or {}
-        file_id = info.get("file_id", "")
-
-    return {
-        "storage_chat_id": storage_group_id,
-        "storage_message_id": msg["message_id"],
-        "file_id": file_id,
-        "filename": file.filename,
-        "media_type": media_type,
-        "duration": info.get("duration"),
-        "width": info.get("width"),
-        "height": info.get("height"),
-        "thumbnail_file_id": await _auto_thumbnail(
-            bot.bot_token, storage_group_id, media_type, file_bytes,
+        # Auto-thumbnail uses the temp file on disk (no extra memory)
+        thumbnail_file_id = await _auto_thumbnail(
+            bot.bot_token, storage_group_id, media_type,
+            video_path=tmp_path,
             blur=blur or "none",
-        ),
-    }
+        )
+
+        return {
+            "storage_chat_id": storage_group_id,
+            "storage_message_id": msg["message_id"],
+            "file_id": file_id,
+            "filename": file.filename,
+            "media_type": media_type,
+            "duration": info.get("duration"),
+            "width": info.get("width"),
+            "height": info.get("height"),
+            "thumbnail_file_id": thumbnail_file_id,
+        }
+    finally:
+        try:
+            os.unlink(tmp_file.name)
+        except OSError:
+            pass
 
 
 @router.post("/upload-thumbnail")

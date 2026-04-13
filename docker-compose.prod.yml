@@ -19,7 +19,7 @@ services:
     command: >
       gunicorn backend.main:app
       -k uvicorn.workers.UvicornWorker
-      -w 4
+      -w 2
       --bind 0.0.0.0:8000
       --timeout 1800
       --graceful-timeout 60
@@ -27,7 +27,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          memory: 2g
 
   worker:
     volumes: []                      # remove dev bind-mounts
