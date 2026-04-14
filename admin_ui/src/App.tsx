@@ -23,6 +23,7 @@ import DeadLetterQueue from "./pages/DeadLetterQueue";
 import WelcomeMessageBuilder from "./pages/WelcomeMessageBuilder";
 import ContentFactory from "./pages/ContentFactory";
 import ContentManager from "./pages/ContentManager";
+import Tutorials from "./pages/Tutorials";
 
 export default function App() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/welcome-builder" element={<WelcomeMessageBuilder />} />
           <Route path="/content-factory" element={<ContentFactory />} />
           <Route path="/content-manager" element={<ContentManager />} />
+          <Route path="/tutorials" element={<Tutorials />} />
         </Route>
       </Route>
     </Routes>

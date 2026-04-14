@@ -22,6 +22,7 @@ const links = [
   { to: "/settings", label: "⚙️ Settings" },
   { to: "/test", label: "🧪 Test Panel" },
   { to: "/logs", label: "📜 Logs" },
+  { to: "/tutorials", label: "📚 Tutorials" },
   { to: "/dlq", label: "☠️ Dead Letter Queue" },
 ];
 

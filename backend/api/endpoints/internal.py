@@ -766,3 +766,56 @@ async def auto_cleanup_all_bots() -> None:
                 "auto_cleanup bot=%d (@%s): deleted=%d failed=%d",
                 bot.id, bot.bot_username, deleted, failed,
             )
+
+
+# ── Bug reports (gateway → backend) ─────────────────────────
+
+class _BugReportBody(BaseModel):
+    telegram_id: int
+    username: str | None = None
+    first_name: str | None = None
+    report: str
+
+
+@router.post("/bug-reports", status_code=201)
+async def submit_bug_report(
+    body: _BugReportBody,
+    db: AsyncSession = Depends(get_db),
+    _auth: None = Depends(verify_internal_key),
+):
+    """Submit a bug report from a user via the gateway."""
+    from backend.models.bug_report import BugReport
+    bug = BugReport(
+        telegram_id=body.telegram_id,
+        username=body.username,
+        first_name=body.first_name,
+        report=body.report,
+    )
+    db.add(bug)
+    await db.commit()
+    return {"detail": "Bug report submitted", "id": bug.id}
+
+
+# ── Tutorials (gateway → backend) ───────────────────────────
+
+@router.get("/tutorials")
+async def list_tutorials_internal(
+    db: AsyncSession = Depends(get_db),
+    _auth: None = Depends(verify_internal_key),
+):
+    """Return all tutorials for the bot menu."""
+    from backend.models.tutorial import Tutorial
+    result = await db.execute(
+        select(Tutorial).order_by(Tutorial.sort_order, Tutorial.id)
+    )
+    tutorials = result.scalars().all()
+    return [
+        {
+            "id": t.id,
+            "question": t.question,
+            "storage_chat_id": t.storage_chat_id,
+            "storage_message_id": t.storage_message_id,
+            "file_id": t.file_id,
+        }
+        for t in tutorials
+    ]

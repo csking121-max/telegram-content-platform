@@ -108,3 +108,28 @@ def clear_awaiting_custom_credits(telegram_id: int) -> None:
 _fallback_pending: dict[int, str] = {}
 _fallback_utr: set[int] = set()
 _fallback_custom: set[int] = set()
+_fallback_bug: set[int] = set()
+
+
+# ── Awaiting bug report: telegram_id set ─────────────────────
+
+def set_awaiting_bug_report(telegram_id: int) -> None:
+    try:
+        _get_client().setex(f"gw:bug:{telegram_id}", STATE_TTL, "1")
+    except Exception:
+        _fallback_bug.add(telegram_id)
+
+
+def is_awaiting_bug_report(telegram_id: int) -> bool:
+    try:
+        return _get_client().exists(f"gw:bug:{telegram_id}") > 0
+    except Exception:
+        return telegram_id in _fallback_bug
+
+
+def clear_awaiting_bug_report(telegram_id: int) -> None:
+    try:
+        _get_client().delete(f"gw:bug:{telegram_id}")
+    except Exception:
+        pass
+    _fallback_bug.discard(telegram_id)

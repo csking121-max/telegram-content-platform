@@ -361,6 +361,65 @@ export interface RateLimitsResponse {
 export const getActiveRateLimits = () =>
   apiClient.get<RateLimitsResponse>("/admin/logs/rate-limits/active").then((r) => r.data);
 
+/* ── Bug Reports ───────────────────────────────────────────── */
+
+export interface BugReportItem {
+  id: number;
+  telegram_id: number;
+  username: string | null;
+  first_name: string | null;
+  report: string;
+  status: string;
+  created_at: string | null;
+}
+
+export interface BugReportsResponse {
+  total: number;
+  items: BugReportItem[];
+}
+
+export const getBugReports = (status = "", limit = 100, offset = 0) =>
+  apiClient.get<BugReportsResponse>("/admin/bug-reports", {
+    params: { status: status || undefined, limit, offset },
+  }).then((r) => r.data);
+
+export const updateBugReportStatus = (id: number, status: string) =>
+  apiClient.put(`/admin/bug-reports/${id}`, { status }).then((r) => r.data);
+
+/* ── Tutorials ─────────────────────────────────────────────── */
+
+export interface TutorialItem {
+  id: number;
+  question: string;
+  storage_chat_id: number;
+  storage_message_id: number;
+  file_id: string;
+  sort_order: number;
+  created_at: string | null;
+}
+
+export const getTutorials = () =>
+  apiClient.get<TutorialItem[]>("/admin/tutorials").then((r) => r.data);
+
+export const createTutorial = (file: File, question: string, sortOrder = 0) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  const sizeMB = file.size / (1024 * 1024);
+  const timeoutMs = Math.max(120_000, Math.ceil(sizeMB / 10) * 60_000);
+  return apiClient
+    .post(`/admin/tutorials?question=${encodeURIComponent(question)}&sort_order=${sortOrder}`, fd, {
+      headers: { "Content-Type": undefined },
+      timeout: timeoutMs,
+    })
+    .then((r) => r.data);
+};
+
+export const updateTutorial = (id: number, data: { question?: string; sort_order?: number }) =>
+  apiClient.put(`/admin/tutorials/${id}`, data).then((r) => r.data);
+
+export const deleteTutorial = (id: number) =>
+  apiClient.delete(`/admin/tutorials/${id}`).then((r) => r.data);
+
 /* -- Credit Packages ---------------------------------------- */
 
 export const getCreditPackages = () =>

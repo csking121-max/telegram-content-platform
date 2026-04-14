@@ -26,6 +26,8 @@ from backend.models.streak_milestone import StreakMilestone
 from backend.models.streak_level import StreakLevel
 from backend.models.default_thumbnail import DefaultThumbnail
 from backend.models.publish_job import PublishJob
+from backend.models.bug_report import BugReport
+from backend.models.tutorial import Tutorial
 
 __all__ = [
     "User",
@@ -53,4 +55,6 @@ __all__ = [
     "StreakLevel",
     "DefaultThumbnail",
     "PublishJob",
+    "BugReport",
+    "Tutorial",
 ]

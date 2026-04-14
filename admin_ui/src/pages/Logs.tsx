@@ -4,9 +4,12 @@ import {
   getLogs,
   getLogSources,
   getActiveRateLimits,
+  getBugReports,
+  updateBugReportStatus,
   type LogResponse,
   type LogSource,
   type RateLimitEntry,
+  type BugReportItem,
 } from "../api/endpoints";
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -35,6 +38,11 @@ export default function Logs() {
   const [showRateLimits, setShowRateLimits] = useState(false);
   const [rateLimits, setRateLimits] = useState<RateLimitEntry[]>([]);
   const [rlLoading, setRlLoading] = useState(false);
+  const [showBugs, setShowBugs] = useState(false);
+  const [bugs, setBugs] = useState<BugReportItem[]>([]);
+  const [bugsTotal, setBugsTotal] = useState(0);
+  const [bugsLoading, setBugsLoading] = useState(false);
+  const [bugFilter, setBugFilter] = useState("");
   const logEndRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -75,17 +83,31 @@ export default function Logs() {
     setRlLoading(false);
   }, []);
 
+  const fetchBugs = useCallback(async () => {
+    setBugsLoading(true);
+    try {
+      const data = await getBugReports(bugFilter);
+      setBugs(data.items);
+      setBugsTotal(data.total);
+    } catch {
+      setBugs([]);
+    }
+    setBugsLoading(false);
+  }, [bugFilter]);
+
   // Initial load
   useEffect(() => {
     fetchSources();
-    if (!showRateLimits) fetchLogs();
-  }, [fetchSources, fetchLogs, showRateLimits]);
+    if (showBugs) fetchBugs();
+    else if (!showRateLimits) fetchLogs();
+  }, [fetchSources, fetchLogs, showRateLimits, showBugs, fetchBugs]);
 
   // Auto-refresh
   useEffect(() => {
     if (autoRefresh) {
       intervalRef.current = setInterval(() => {
-        if (showRateLimits) fetchRL();
+        if (showBugs) fetchBugs();
+        else if (showRateLimits) fetchRL();
         else fetchLogs();
       }, 3000);
     }
@@ -140,15 +162,15 @@ export default function Logs() {
         {sources.map((s) => (
           <button
             key={s.name}
-            onClick={() => { setActiveSource(s.name); setShowRateLimits(false); }}
+            onClick={() => { setActiveSource(s.name); setShowRateLimits(false); setShowBugs(false); }}
             style={{
               padding: "8px 16px",
-              background: !showRateLimits && activeSource === s.name ? "#2c3e50" : "#ecf0f1",
-              color: !showRateLimits && activeSource === s.name ? "#fff" : "#333",
+              background: !showRateLimits && !showBugs && activeSource === s.name ? "#2c3e50" : "#ecf0f1",
+              color: !showRateLimits && !showBugs && activeSource === s.name ? "#fff" : "#333",
               border: "none",
               borderRadius: "4px 4px 0 0",
               cursor: "pointer",
-              fontWeight: !showRateLimits && activeSource === s.name ? 600 : 400,
+              fontWeight: !showRateLimits && !showBugs && activeSource === s.name ? 600 : 400,
             }}
           >
             {s.name.toUpperCase()}
@@ -158,7 +180,7 @@ export default function Logs() {
           </button>
         ))}
         <button
-          onClick={() => { setShowRateLimits(true); fetchRL(); }}
+          onClick={() => { setShowRateLimits(true); setShowBugs(false); fetchRL(); }}
           style={{
             padding: "8px 16px",
             background: showRateLimits ? "#2c3e50" : "#ecf0f1",
@@ -171,9 +193,128 @@ export default function Logs() {
         >
           ⚡ RATE LIMITS
         </button>
+        <button
+          onClick={() => { setShowBugs(true); setShowRateLimits(false); fetchBugs(); }}
+          style={{
+            padding: "8px 16px",
+            background: showBugs ? "#2c3e50" : "#ecf0f1",
+            color: showBugs ? "#fff" : "#333",
+            border: "none",
+            borderRadius: "4px 4px 0 0",
+            cursor: "pointer",
+            fontWeight: showBugs ? 600 : 400,
+          }}
+        >
+          🐛 BUGS
+        </button>
       </div>
 
-      {showRateLimits ? (
+      {showBugs ? (
+        /* ── Bug Reports Panel ── */
+        <div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, alignItems: "center" }}>
+            <select
+              value={bugFilter}
+              onChange={(e) => setBugFilter(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 4, border: "1px solid #ccc" }}
+            >
+              <option value="">All</option>
+              <option value="open">Open</option>
+              <option value="closed">Closed</option>
+            </select>
+            <span style={{ fontSize: 12, color: "#666" }}>
+              {bugsLoading ? "Loading..." : `${bugsTotal} report(s)`}
+            </span>
+          </div>
+          {bugs.length === 0 && !bugsLoading && (
+            <p style={{ color: "#999", fontStyle: "italic" }}>No bug reports found.</p>
+          )}
+          {bugs.length > 0 && (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#f8f9fa", textAlign: "left" }}>
+                  <th style={{ padding: "8px 12px", borderBottom: "2px solid #dee2e6" }}>ID</th>
+                  <th style={{ padding: "8px 12px", borderBottom: "2px solid #dee2e6" }}>User</th>
+                  <th style={{ padding: "8px 12px", borderBottom: "2px solid #dee2e6" }}>Report</th>
+                  <th style={{ padding: "8px 12px", borderBottom: "2px solid #dee2e6" }}>Status</th>
+                  <th style={{ padding: "8px 12px", borderBottom: "2px solid #dee2e6" }}>Date</th>
+                  <th style={{ padding: "8px 12px", borderBottom: "2px solid #dee2e6" }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bugs.map((b) => (
+                  <tr key={b.id} style={{ background: b.status === "open" ? "#fffbe6" : "transparent" }}>
+                    <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee" }}>#{b.id}</td>
+                    <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee" }}>
+                      <div style={{ fontWeight: 600 }}>{b.first_name || "—"}</div>
+                      <div style={{ fontSize: 11, color: "#888" }}>
+                        {b.username ? `@${b.username}` : ""} ({b.telegram_id})
+                      </div>
+                    </td>
+                    <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee", maxWidth: 400, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      {b.report}
+                    </td>
+                    <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee" }}>
+                      <span style={{
+                        padding: "2px 8px",
+                        borderRadius: 12,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        background: b.status === "open" ? "#fff3cd" : "#d4edda",
+                        color: b.status === "open" ? "#856404" : "#155724",
+                      }}>
+                        {b.status.toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee", fontSize: 11, color: "#888" }}>
+                      {b.created_at ? new Date(b.created_at).toLocaleString() : "—"}
+                    </td>
+                    <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee" }}>
+                      {b.status === "open" ? (
+                        <button
+                          onClick={async () => {
+                            await updateBugReportStatus(b.id, "closed");
+                            fetchBugs();
+                          }}
+                          style={{
+                            padding: "4px 10px",
+                            background: "#28a745",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                            fontSize: 11,
+                          }}
+                        >
+                          ✓ Close
+                        </button>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            await updateBugReportStatus(b.id, "open");
+                            fetchBugs();
+                          }}
+                          style={{
+                            padding: "4px 10px",
+                            background: "#ffc107",
+                            color: "#333",
+                            border: "none",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                            fontSize: 11,
+                          }}
+                        >
+                          ↩ Reopen
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : showRateLimits ? (
         /* ── Rate Limits Panel ── */
         <div>
           <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>

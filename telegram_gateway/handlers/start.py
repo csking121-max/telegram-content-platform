@@ -29,6 +29,7 @@ from aiogram.types import (
 from telegram_gateway.http_client import forward_to_backend, api_get, api_get_bytes, api_post
 from telegram_gateway.handlers.payment import _build_enter_utr_kb, _show_pending_orders
 from telegram_gateway.redis_state import set_pending_order
+from telegram_gateway.redis_state import is_awaiting_bug_report as _is_bug_mode
 from telegram_gateway.message_tracker import track
 
 logger = logging.getLogger(__name__)
@@ -198,6 +199,12 @@ def _build_main_menu(content_channel_link: str = "") -> InlineKeyboardMarkup:
     buttons.append([
         InlineKeyboardButton(text="Payment Status", callback_data="menu:mystatus"),
         InlineKeyboardButton(text="Help", callback_data="menu:help"),
+    ])
+
+    # Row 5: Tutorial + Report Bug
+    buttons.append([
+        InlineKeyboardButton(text="📚 Tutorial", callback_data="menu:tutorial"),
+        InlineKeyboardButton(text="🐛 Report Bug", callback_data="menu:bug_report"),
     ])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -420,6 +427,7 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
                     chat_id=user_chat_id,
                     from_chat_id=first["storage_chat_id"],
                     message_id=first["storage_message_id"],
+                    protect_content=True,
                 ),
                 timeout=5,
             )
@@ -437,6 +445,7 @@ async def _deliver_content(message: Message, pack_id: int) -> list[int]:
                             chat_id=user_chat_id,
                             from_chat_id=item["storage_chat_id"],
                             message_id=item["storage_message_id"],
+                            protect_content=True,
                         ),
                         timeout=10,
                     )
@@ -498,13 +507,13 @@ async def _deliver_via_proxy(
         input_file = BufferedInputFile(file_bytes, filename=f"content.{mt}")
 
         if mt == "photo":
-            return await bot.send_photo(chat_id=chat_id, photo=input_file)
+            return await bot.send_photo(chat_id=chat_id, photo=input_file, protect_content=True)
         elif mt == "video":
-            return await bot.send_video(chat_id=chat_id, video=input_file)
+            return await bot.send_video(chat_id=chat_id, video=input_file, protect_content=True)
         elif mt == "animation":
-            return await bot.send_animation(chat_id=chat_id, animation=input_file)
+            return await bot.send_animation(chat_id=chat_id, animation=input_file, protect_content=True)
         else:
-            return await bot.send_document(chat_id=chat_id, document=input_file)
+            return await bot.send_document(chat_id=chat_id, document=input_file, protect_content=True)
     except Exception as e:
         logger.warning("Proxy delivery failed for %s/%s: %s", storage_chat_id, storage_message_id, e)
         return None
@@ -691,6 +700,167 @@ async def handle_menu_callback(callback: CallbackQuery) -> None:
         if support:
             text += f"\nSupport: {support}"
         await callback.message.answer(text, parse_mode="Markdown")  # type: ignore
+
+    elif action == "bug_report":
+        from telegram_gateway.redis_state import set_awaiting_bug_report
+        set_awaiting_bug_report(user.id)
+        await callback.message.answer(  # type: ignore
+            "🐛 **Report a Bug**\n\n"
+            "Please type your bug report below. Describe the issue in detail.\n\n"
+            "When you're done, send /send to submit your report.\n"
+            "Send /cancel to cancel.",
+            parse_mode="Markdown",
+        )
+
+    elif action == "tutorial":
+        await _send_tutorial_menu(callback.message, user.id)  # type: ignore
+
+
+# -- Bug report flow ------------------------------------------------
+
+# Temporary in-memory storage for multi-message bug reports
+_bug_report_texts: dict[int, str] = {}
+
+
+@start_router.message(Command("send"))
+async def handle_send_bug(message: Message) -> None:
+    """Submit the accumulated bug report text."""
+    user = message.from_user
+    if not user:
+        return
+    from telegram_gateway.redis_state import is_awaiting_bug_report, clear_awaiting_bug_report
+    if not is_awaiting_bug_report(user.id):
+        return  # Not in bug report mode, let other handlers process
+    report_text = _bug_report_texts.pop(user.id, "")
+    if not report_text.strip():
+        await message.answer("You haven't typed any bug report yet. Please type your report first, then send /send.")
+        return
+    clear_awaiting_bug_report(user.id)
+    # Submit to backend
+    result = await api_post("/internal/bug-reports", {
+        "telegram_id": user.id,
+        "username": user.username,
+        "first_name": user.first_name,
+        "report": report_text.strip(),
+    })
+    if result and not result.get("_error"):
+        await message.answer("✅ **Bug submitted successfully!** Thank you for your report.", parse_mode="Markdown")
+    else:
+        await message.answer("❌ Failed to submit bug report. Please try again later.")
+
+
+@start_router.message(Command("cancel"))
+async def handle_cancel_bug(message: Message) -> None:
+    """Cancel the bug report flow."""
+    user = message.from_user
+    if not user:
+        return
+    from telegram_gateway.redis_state import is_awaiting_bug_report, clear_awaiting_bug_report
+    if not is_awaiting_bug_report(user.id):
+        return
+    clear_awaiting_bug_report(user.id)
+    _bug_report_texts.pop(user.id, None)
+    await message.answer("Bug report cancelled.")
+
+
+@start_router.message(
+    lambda m: (
+        m.chat.type == "private"
+        and m.text
+        and not m.text.startswith("/")
+        and m.from_user
+        and _is_bug_mode(m.from_user.id)
+    )
+)
+async def handle_bug_report_text(message: Message) -> None:
+    """Capture bug report text while user is in bug report mode."""
+    user = message.from_user
+    if not user or not message.text:
+        return
+    existing = _bug_report_texts.get(user.id, "")
+    _bug_report_texts[user.id] = (existing + "\n" + message.text).strip()
+    await message.answer("📝 Noted. You can keep typing or send /send to submit your report.")
+
+
+# -- Tutorial flow ---------------------------------------------------
+
+async def _send_tutorial_menu(message: Message, user_id: int) -> None:
+    """Show tutorial menu with available tutorial topics."""
+    tutorials = await api_get("/internal/tutorials")
+    if not tutorials:
+        await message.answer(
+            "📚 **Tutorial**\n\nNo tutorials available yet. Check back later!",
+            parse_mode="Markdown",
+        )
+        return
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    for t in tutorials:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📖 {t['question']}",
+                callback_data=f"tutorial:{t['id']}",
+            )
+        ])
+    buttons.append([InlineKeyboardButton(text="◀️ Main Menu", callback_data="menu:main")])
+
+    await message.answer(
+        "📚 **Tutorial**\n\nSelect a topic to watch the tutorial video:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="Markdown",
+    )
+
+
+@start_router.callback_query(lambda c: c.data and c.data.startswith("tutorial:"))
+async def handle_tutorial_callback(callback: CallbackQuery) -> None:
+    """Send the tutorial video to the user."""
+    user = callback.from_user
+    if not user or not callback.data:
+        return
+    await _safe_answer(callback)
+
+    tutorial_id = callback.data.split(":")[1]
+    tutorials = await api_get("/internal/tutorials")
+    if not tutorials:
+        await callback.message.answer("Tutorial not found.")  # type: ignore
+        return
+
+    tutorial = next((t for t in tutorials if str(t["id"]) == tutorial_id), None)
+    if not tutorial:
+        await callback.message.answer("Tutorial not found.")  # type: ignore
+        return
+
+    bot: Bot = callback.message.bot  # type: ignore
+    try:
+        await bot.copy_message(
+            chat_id=callback.message.chat.id,  # type: ignore
+            from_chat_id=tutorial["storage_chat_id"],
+            message_id=tutorial["storage_message_id"],
+            protect_content=True,
+        )
+    except Exception:
+        # Fallback: try sending by file_id
+        try:
+            await bot.send_video(
+                chat_id=callback.message.chat.id,  # type: ignore
+                video=tutorial["file_id"],
+                protect_content=True,
+            )
+        except Exception as e:
+            logger.warning("Tutorial delivery failed: %s", e)
+            await callback.message.answer("❌ Could not deliver tutorial video. Please try again later.")  # type: ignore
+            return
+
+    # Show back button
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📚 More Tutorials", callback_data="menu:tutorial")],
+        [InlineKeyboardButton(text="◀️ Main Menu", callback_data="menu:main")],
+    ])
+    await callback.message.answer(  # type: ignore
+        f"📖 *{_md_escape(tutorial['question'])}*",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
 
 
 # -- Plan callbacks: targeted view + detail view -------------------
