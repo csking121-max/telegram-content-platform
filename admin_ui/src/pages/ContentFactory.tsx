@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   uploadVideo,
   uploadThumbnail,
+  extractFrame,
   getFactoryCategories,
   getActiveBots,
   publishContent,
@@ -308,8 +309,29 @@ export default function ContentFactory() {
 
   const uploadSingleFile = useCallback(async (v: UploadedVideo) => {
     if (!v.file) return;
+    const startTime = Date.now();
+    const totalBytes = v.file.size;
+    // Set initial progress state
+    setVideos((prev) =>
+      prev.map((x) =>
+        x.id === v.id ? { ...x, uploadStartTime: startTime, totalBytes, uploadedBytes: 0, uploadProgress: 0 } : x,
+      ),
+    );
     try {
-      const result = await uploadVideo(v.file, undefined, v.upload_bot_id || undefined, v.blur);
+      const result = await uploadVideo(
+        v.file,
+        (pct: number, loaded?: number) => {
+          setVideos((prev) =>
+            prev.map((x) =>
+              x.id === v.id
+                ? { ...x, uploadProgress: pct, uploadedBytes: loaded ?? Math.round((pct / 100) * totalBytes) }
+                : x,
+            ),
+          );
+        },
+        v.upload_bot_id || undefined,
+        v.blur,
+      );
       setVideos((prev) =>
         prev.map((x) =>
           x.id === v.id
@@ -549,62 +571,131 @@ export default function ContentFactory() {
     value,
     onChange,
     onUpload,
+    videoFile,
+    blur,
   }: {
     value: string;
     onChange: (fileId: string) => void;
     onUpload: (file: File) => void;
-  }) => (
-    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-      <select
-        value={value && defaultThumbs.some((t) => t.file_id === value) ? value : "_custom"}
-        onChange={(e) => {
-          if (e.target.value === "_custom") return; // handled by file input
-          if (e.target.value === "_none") { onChange(""); return; }
-          onChange(e.target.value);
-        }}
-        style={{ ...select_, width: 120, fontSize: 11 }}
-      >
-        <option value="_none">— None —</option>
-        {defaultThumbs.map((t) => (
-          <option key={t.id} value={t.file_id}>
-            🖼️ {t.name}
-          </option>
-        ))}
-        <option value="_custom">📁 Custom upload…</option>
-      </select>
-      {value ? (
-        <span style={{ color: "#2ecc71", fontSize: 12 }}>
-          ✅{" "}
-          <button
-            onClick={() => onChange("")}
-            style={{ ...btn, padding: "1px 6px", fontSize: 11, background: "#eee" }}
-          >
-            ✕
-          </button>
-        </span>
-      ) : (
-        <label
-          style={{
-            ...btn,
-            padding: "4px 8px",
-            fontSize: 11,
-            background: "#f0f0f0",
-            display: "inline-block",
-          }}
-        >
-          Upload
-          <input
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
+    videoFile?: File | null;
+    blur?: string;
+  }) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const [showPicker, setShowPicker] = useState(false);
+    const [extracting, setExtracting] = useState(false);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+    // Create object URL for the video file
+    useEffect(() => {
+      if (videoFile && showPicker) {
+        const url = URL.createObjectURL(videoFile);
+        setPreviewUrl(url);
+        return () => URL.revokeObjectURL(url);
+      }
+      setPreviewUrl(null);
+    }, [videoFile, showPicker]);
+
+    const handleExtractFrame = async () => {
+      if (!videoFile || !videoRef.current) return;
+      const timestamp = videoRef.current.currentTime;
+      setExtracting(true);
+      try {
+        const result = await extractFrame(videoFile, timestamp, blur);
+        if (result.file_id) {
+          onChange(result.file_id);
+          setShowPicker(false);
+        }
+      } catch {
+        alert("Failed to extract frame");
+      } finally {
+        setExtracting(false);
+      }
+    };
+
+    return (
+      <div style={{ display: "flex", gap: 4, alignItems: "center", flexDirection: "column" }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", width: "100%" }}>
+          <select
+            value={value && defaultThumbs.some((t) => t.file_id === value) ? value : "_custom"}
             onChange={(e) => {
-              if (e.target.files?.[0]) onUpload(e.target.files[0]);
+              if (e.target.value === "_custom") return;
+              if (e.target.value === "_none") { onChange(""); return; }
+              onChange(e.target.value);
             }}
-          />
-        </label>
-      )}
-    </div>
-  );
+            style={{ ...select_, width: 120, fontSize: 11 }}
+          >
+            <option value="_none">— None —</option>
+            {defaultThumbs.map((t) => (
+              <option key={t.id} value={t.file_id}>
+                🖼️ {t.name}
+              </option>
+            ))}
+            <option value="_custom">📁 Custom…</option>
+          </select>
+          {value ? (
+            <span style={{ color: "#2ecc71", fontSize: 12 }}>
+              ✅{" "}
+              <button
+                onClick={() => onChange("")}
+                style={{ ...btn, padding: "1px 6px", fontSize: 11, background: "#eee" }}
+              >
+                ✕
+              </button>
+            </span>
+          ) : (
+            <label
+              style={{
+                ...btn,
+                padding: "4px 8px",
+                fontSize: 11,
+                background: "#f0f0f0",
+                display: "inline-block",
+              }}
+            >
+              Upload
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  if (e.target.files?.[0]) onUpload(e.target.files[0]);
+                }}
+              />
+            </label>
+          )}
+          {videoFile && (
+            <button
+              onClick={() => setShowPicker(!showPicker)}
+              style={{ ...btn, padding: "4px 8px", fontSize: 11, background: showPicker ? "#d4edda" : "#e8f4fd" }}
+              title="Pick a frame from the video as thumbnail"
+            >
+              🎬 Pick Frame
+            </button>
+          )}
+        </div>
+        {showPicker && previewUrl && (
+          <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 6, background: "#fafafa", width: "100%", marginTop: 4 }}>
+            <video
+              ref={videoRef}
+              src={previewUrl}
+              controls
+              style={{ width: "100%", maxHeight: 160, borderRadius: 4, background: "#000" }}
+            />
+            <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center" }}>
+              <button
+                onClick={handleExtractFrame}
+                disabled={extracting}
+                style={{ ...btnSuccess, padding: "4px 12px", fontSize: 11, opacity: extracting ? 0.6 : 1 }}
+              >
+                {extracting ? "⏳ Extracting…" : "📸 Use This Frame"}
+              </button>
+              <span style={{ fontSize: 10, color: "#888" }}>Pause at the desired frame, then click</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   /* ── render ─────────────────────────────────────── */
 
@@ -1254,13 +1345,35 @@ export default function ContentFactory() {
                           value={v.thumbnail_file_id || ""}
                           onChange={(fid) => updateVideo(v.id, { thumbnail_file_id: fid || undefined })}
                           onUpload={(file) => handleThumbUpload(v.id, file)}
+                          videoFile={v.media_type === "video" ? v.file : undefined}
+                          blur={v.blur}
                         />
                       </td>
                     </>
                   )}
 
                   <td style={tdStyle}>
-                    {v.uploading && <span style={{ color: "#f39c12" }}>⏳ Uploading…</span>}
+                    {v.uploading && (() => {
+                      const pct = v.uploadProgress ?? 0;
+                      const uploaded = v.uploadedBytes ?? 0;
+                      const total = v.totalBytes ?? 0;
+                      const elapsed = v.uploadStartTime ? (Date.now() - v.uploadStartTime) / 1000 : 0;
+                      const speed = elapsed > 0 ? uploaded / elapsed : 0;
+                      const fmtSize = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+                      const fmtSpeed = (s: number) => s < 1024 ? `${s.toFixed(0)} B/s` : s < 1048576 ? `${(s / 1024).toFixed(1)} KB/s` : `${(s / 1048576).toFixed(1)} MB/s`;
+                      return (
+                        <div style={{ minWidth: 140 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                            <span style={{ color: "#f39c12", fontSize: 12 }}>⏳ {pct}%</span>
+                            {speed > 0 && <span style={{ color: "#888", fontSize: 10 }}>{fmtSpeed(speed)}</span>}
+                          </div>
+                          <div style={{ background: "#eee", borderRadius: 4, height: 6, overflow: "hidden" }}>
+                            <div style={{ background: "#f39c12", height: "100%", width: `${pct}%`, transition: "width 0.3s", borderRadius: 4 }} />
+                          </div>
+                          {total > 0 && <div style={{ fontSize: 10, color: "#888", marginTop: 1 }}>{fmtSize(uploaded)} / {fmtSize(total)}</div>}
+                        </div>
+                      );
+                    })()}
                     {v.error && (
                       <span style={{ color: "#e74c3c", cursor: "help" }} title={v.error}>
                         ❌ {v.error.length > 30 ? v.error.slice(0, 30) + "…" : v.error}

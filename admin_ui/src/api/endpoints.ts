@@ -493,7 +493,7 @@ export const purgeDlq = (queue: string) =>
 
 /* ── Content Factory ───────────────────────────────────── */
 
-export const uploadVideo = (file: File, onProgress?: (pct: number) => void, botId?: number, blur?: string) => {
+export const uploadVideo = (file: File, onProgress?: (pct: number, loaded?: number) => void, botId?: number, blur?: string) => {
   const params = new URLSearchParams();
   if (botId) params.set("bot_id", String(botId));
   if (blur && blur !== "none") params.set("blur", blur);
@@ -506,7 +506,7 @@ export const uploadVideo = (file: File, onProgress?: (pct: number) => void, botI
       headers: { "Content-Type": undefined },
       timeout: timeoutMs,
       onUploadProgress: (e) => {
-        if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
+        if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total), e.loaded);
       },
     })
     .then((r) => r.data);
@@ -521,6 +521,22 @@ export const uploadThumbnail = (file: File) => {
       timeout: 60_000,
     })
     .then((r) => r.data);
+};
+
+export const extractFrame = (file: File, timestamp: number, blur?: string) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  const params = new URLSearchParams();
+  params.set("timestamp", String(timestamp));
+  if (blur && blur !== "none") params.set("blur", blur);
+  const sizeMB = file.size / (1024 * 1024);
+  const timeoutMs = Math.max(120_000, Math.ceil(sizeMB / 10) * 60_000);
+  return apiClient
+    .post(`/admin/content-factory/extract-frame?${params.toString()}`, fd, {
+      headers: { "Content-Type": undefined },
+      timeout: timeoutMs,
+    })
+    .then((r) => r.data as { file_id: string });
 };
 
 export const getFactoryCategories = () =>

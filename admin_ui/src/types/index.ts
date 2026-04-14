@@ -224,6 +224,10 @@ export interface UploadedVideo {
   uploading: boolean;
   uploaded: boolean;  // true once upload to TG succeeded
   error?: string;
+  uploadProgress?: number;    // 0-100
+  uploadedBytes?: number;
+  totalBytes?: number;
+  uploadStartTime?: number;   // Date.now() when upload began
 }
 
 export interface ContentCategory {

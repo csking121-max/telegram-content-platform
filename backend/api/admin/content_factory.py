@@ -181,6 +181,38 @@ BLUR_FILTERS = {
 }
 
 
+def _get_video_duration(video_path: str) -> float | None:
+    """Get video duration in seconds using ffprobe."""
+    try:
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, timeout=10, text=True)
+        if proc.returncode == 0 and proc.stdout.strip():
+            return float(proc.stdout.strip())
+    except Exception as e:
+        logger.warning("ffprobe duration failed: %s", e)
+    return None
+
+
+def _smart_seek_sec(duration: float | None) -> float:
+    """Pick a smart thumbnail seek time based on video duration."""
+    if duration is None or duration <= 0:
+        return 2.0
+    if duration < 10:
+        return min(1.0, duration * 0.3)
+    if duration < 60:
+        return 5.0
+    if duration < 300:
+        return 30.0
+    if duration < 600:
+        return 60.0
+    return 120.0
+
+
 def _extract_video_thumbnail(
     video_path: str, seek_sec: float = 2.0, blur: str = "none",
 ) -> bytes | None:
@@ -258,8 +290,12 @@ async def _auto_thumbnail(
         return None
     try:
         loop = asyncio.get_event_loop()
+        # Determine video duration and pick smart seek time
+        duration = await loop.run_in_executor(None, _get_video_duration, video_path)
+        seek_sec = _smart_seek_sec(duration)
+        logger.info("Auto-thumbnail: duration=%.1fs, seek=%.1fs", duration or 0, seek_sec)
         thumb_bytes = await loop.run_in_executor(
-            None, _extract_video_thumbnail, video_path, 2.0, blur,
+            None, _extract_video_thumbnail, video_path, seek_sec, blur,
         )
         if not thumb_bytes:
             return None
@@ -454,6 +490,58 @@ async def upload_thumbnail(
     file_id = photos[-1]["file_id"] if photos else ""
 
     return {"file_id": file_id, "message_id": msg["message_id"]}
+
+
+@router.post("/extract-frame")
+async def extract_frame(
+    file: UploadFile = File(...),
+    timestamp: float = Query(2.0, description="Timestamp in seconds to extract frame from"),
+    blur: Optional[str] = Query(None, description="Blur level: light, medium, heavy"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Extract a frame from a video at a specific timestamp and upload as thumbnail."""
+    ct = file.content_type or ""
+    if not ct.startswith("video/"):
+        raise HTTPException(400, f"Only video files accepted (got {ct})")
+
+    if timestamp < 0:
+        raise HTTPException(400, "Timestamp must be non-negative")
+
+    bot = await _get_first_active_bot(db)
+    storage_group_id = await _get_storage_group_id(db)
+
+    # Stream video to temp file
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename or "")[1] or ".mp4")
+    try:
+        while chunk := await file.read(8 * 1024 * 1024):
+            tmp_file.write(chunk)
+        tmp_file.close()
+
+        loop = asyncio.get_event_loop()
+        thumb_bytes = await loop.run_in_executor(
+            None, _extract_video_thumbnail, tmp_file.name, timestamp, blur or "none",
+        )
+
+        if not thumb_bytes:
+            raise HTTPException(422, "Could not extract frame at the given timestamp")
+
+        # Upload to Telegram storage group
+        result = await _tg_upload_file(
+            bot.bot_token, "sendPhoto",
+            data={"chat_id": str(storage_group_id)},
+            files={"photo": ("frame_thumb.jpg", thumb_bytes, "image/jpeg")},
+        )
+        if not result or not result.get("ok"):
+            raise HTTPException(502, "Failed to upload extracted frame to Telegram")
+
+        photos = result["result"].get("photo") or []
+        file_id = photos[-1]["file_id"] if photos else ""
+        return {"file_id": file_id}
+    finally:
+        try:
+            os.unlink(tmp_file.name)
+        except OSError:
+            pass
 
 
 # ── Default Thumbnails CRUD ──────────────────────────────────
