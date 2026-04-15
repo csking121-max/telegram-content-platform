@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 TELEGRAM_API = "https://api.telegram.org"
+TELEGRAM_LOCAL_API = __import__("os").environ.get("TELEGRAM_LOCAL_API_URL", "")
 
 
 # ── Internal API authentication ──────────────────────────────
@@ -388,19 +389,45 @@ async def proxy_content(
 
 
 async def _download_file(token: str, file_id: str | None, media_type: str):
-    """Download file bytes via Telegram getFile API."""
+    """Download file bytes via Telegram getFile API.
+
+    Falls back to Local Bot API when cloud getFile returns 'file is too big' (>20 MB).
+    """
     from starlette.responses import Response
 
     if not file_id:
         return None
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
+            # Try cloud API first
             resp = await client.post(
                 f"{TELEGRAM_API}/bot{token}/getFile",
                 json={"file_id": file_id},
             )
             if resp.status_code != 200:
-                logger.warning("getFile failed: %s %s", resp.status_code, resp.text[:200])
+                body = resp.text[:200]
+                if "file is too big" in body and TELEGRAM_LOCAL_API:
+                    # File >20 MB — retry via Local Bot API which has no size limit
+                    logger.info("getFile: file too big for cloud API, retrying via Local Bot API")
+                    resp = await client.post(
+                        f"{TELEGRAM_LOCAL_API}/bot{token}/getFile",
+                        json={"file_id": file_id},
+                    )
+                    if resp.status_code != 200:
+                        logger.warning("getFile via Local API also failed: %s %s", resp.status_code, resp.text[:200])
+                        return None
+                    file_path = resp.json().get("result", {}).get("file_path")
+                    if not file_path:
+                        return None
+                    dl = await client.get(f"{TELEGRAM_LOCAL_API}/file/bot{token}/{file_path}")
+                    if dl.status_code != 200:
+                        return None
+                    return Response(
+                        content=dl.content,
+                        media_type="application/octet-stream",
+                        headers={"X-Media-Type": media_type},
+                    )
+                logger.warning("getFile failed: %s %s", resp.status_code, body)
                 return None
             file_path = resp.json().get("result", {}).get("file_path")
             if not file_path:

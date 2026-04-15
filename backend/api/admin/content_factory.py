@@ -102,14 +102,17 @@ async def _tg_upload_file(
     """Call Telegram Bot API with file upload (multipart/form-data)."""
     base = api_base or TELEGRAM_API
     url = f"{base}/bot{token}/{method}"
+    _EXPECTED_400 = ("wrong file identifier", "file is too big")
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, data=data, files=files)
             if resp.status_code == 200:
                 return resp.json()
-            logger.warning(
-                "TG %s → %s: %s", method, resp.status_code, resp.text[:400],
-            )
+            body = resp.text[:400]
+            if resp.status_code == 400 and any(e in body for e in _EXPECTED_400):
+                logger.debug("TG %s expected 400 (will fallback): %s", method, body)
+            else:
+                logger.warning("TG %s → %s: %s", method, resp.status_code, body)
     except Exception as e:
         logger.warning("TG %s failed: %s", method, e)
     return None
@@ -117,15 +120,18 @@ async def _tg_upload_file(
 
 async def _tg_request(token: str, method: str, payload: dict) -> dict | None:
     """Call Telegram Bot API with JSON payload."""
+    _EXPECTED_400 = ("wrong file identifier", "file is too big")
     url = f"{TELEGRAM_API}/bot{token}/{method}"
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 return resp.json()
-            logger.warning(
-                "TG %s → %s: %s", method, resp.status_code, resp.text[:400],
-            )
+            body = resp.text[:400]
+            if resp.status_code == 400 and any(e in body for e in _EXPECTED_400):
+                logger.debug("TG %s expected 400 (will fallback): %s", method, body)
+            else:
+                logger.warning("TG %s → %s: %s", method, resp.status_code, body)
     except Exception as e:
         logger.warning("TG %s failed: %s", method, e)
     return None
