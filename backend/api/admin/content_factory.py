@@ -843,6 +843,11 @@ async def _publish_solo(job_id: str, body: PublishRequest, delay: float):
                     db, bot, title, item.access_type, item.credit_cost,
                     1, deep_link, item.thumbnail_file_id,
                 )
+                logger.info(
+                    "Solo publish item %d: thumbnail_file_id=%s, channel_posted=%s",
+                    idx, item.thumbnail_file_id[:30] if item.thumbnail_file_id else "None",
+                    channel_posted,
+                )
 
                 await _append_result(job_id, {
                     "pack_id": pack.id,
@@ -900,11 +905,12 @@ async def _post_to_channel(
         if result:
             return True
 
-        # file_id failed — thumbnail was uploaded via a different bot.
-        # Download via the upload bot and re-upload through the channel bot.
-        upload_bot = await _get_first_active_bot(db)
-        if upload_bot.bot_token != bot.bot_token:
-            img_bytes = await _tg_download_file(upload_bot.bot_token, thumbnail_file_id)
+        # file_id failed — try downloading via every bot and re-uploading
+        logger.info("sendPhoto with file_id failed for channel post, trying download+re-upload fallback")
+        bot_svc = BotService(db)
+        all_bots = await bot_svc.list_active()
+        for src_bot in all_bots:
+            img_bytes = await _tg_download_file(src_bot.bot_token, thumbnail_file_id)
             if img_bytes:
                 reup = await _tg_upload_file(
                     bot.bot_token,
@@ -918,6 +924,8 @@ async def _post_to_channel(
                 )
                 if reup and reup.get("ok"):
                     return True
+                break  # downloaded OK but re-upload failed, don't retry other bots
+        logger.warning("All thumbnail fallback attempts failed for channel post")
 
     result = await _tg_request(bot.bot_token, "sendMessage", {
         "chat_id": int(channel_id),
