@@ -340,7 +340,7 @@ export default function ContentFactory() {
                 storage_chat_id: result.storage_chat_id,
                 storage_message_id: result.storage_message_id,
                 file_id: result.file_id,
-                thumbnail_file_id: result.thumbnail_file_id || x.thumbnail_file_id,
+                thumbnail_file_id: x.thumbnail_file_id || result.thumbnail_file_id,
                 duration: result.duration,
                 width: result.width,
                 height: result.height,
