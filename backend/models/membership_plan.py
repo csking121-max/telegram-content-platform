@@ -26,7 +26,7 @@ class MembershipPlan(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     access_type: Mapped[str] = mapped_column(
         String(32), nullable=False, default="vip",
-    )  # free | vip | premium | daily_pass
+    )  # free | vip | premium | daily_pass | exclusive
     price_inr: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
     credit_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)

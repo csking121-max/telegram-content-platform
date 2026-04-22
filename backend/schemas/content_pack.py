@@ -11,7 +11,7 @@ from backend.schemas.pack_item import PackItemRead
 class ContentPackCreate(BaseModel):
     title: str
     description: Optional[str] = None
-    access_type: str = "free"  # free | credits | daily_pass | vip | premium
+    access_type: str = "free"  # free | credits | credits_only | daily_pass | vip | premium | exclusive
     credit_cost: int = 0
     credit_mode: str = "per_item"  # per_pack | per_item
     credit_per_item: int = 1
