@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 
 from backend.config import settings
 from backend.redis_client import RedisClient
@@ -21,7 +21,6 @@ from backend.redis_client import RedisClient
 logger = logging.getLogger(__name__)
 
 _bearer = HTTPBearer(auto_error=False)  # auto_error=False so we can fall back to cookie
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ALGORITHM = "HS256"
 
@@ -65,11 +64,14 @@ def _add_jti_to_blacklist(jti: str, exp_timestamp: float) -> None:
 # ── Password helpers ────────────────────────────────────────────
 
 def hash_password(plain: str) -> str:
-    return _pwd_ctx.hash(plain)
+    return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(plain, hashed)
+    try:
+        return _bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception:
+        return False
 
 
 # ── JWT helpers ─────────────────────────────────────────────────

@@ -34,7 +34,7 @@ class Settings:
     DEBUG: bool = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me")
-    CORS_ORIGINS: List[str] = _list_from_env("CORS_ORIGINS", '["*"]')
+    CORS_ORIGINS: List[str] = _list_from_env("CORS_ORIGINS", '[]')
 
     # ── Database ─────────────────────────────────────
     # SQLite default for local dev; use postgresql+asyncpg:// in production

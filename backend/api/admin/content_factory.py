@@ -327,6 +327,7 @@ async def upload_file(
     file: UploadFile = File(...),
     bot_id: Optional[int] = Query(None, description="Bot ID to use for upload (default: first active bot)"),
     blur: Optional[str] = Query(None, description="Blur level for auto-thumbnail: light, medium, heavy"),
+    auto_thumb: bool = Query(True, description="Auto-generate thumbnail from video frame"),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload any file to the Telegram Storage Group."""
@@ -440,11 +441,13 @@ async def upload_file(
             file_id = info.get("file_id", "")
 
         # Auto-thumbnail uses the temp file on disk (no extra memory)
-        thumbnail_file_id = await _auto_thumbnail(
-            bot.bot_token, storage_group_id, media_type,
-            video_path=tmp_path,
-            blur=blur or "none",
-        )
+        thumbnail_file_id = None
+        if auto_thumb:
+            thumbnail_file_id = await _auto_thumbnail(
+                bot.bot_token, storage_group_id, media_type,
+                video_path=tmp_path,
+                blur=blur or "none",
+            )
 
         return {
             "storage_chat_id": storage_group_id,

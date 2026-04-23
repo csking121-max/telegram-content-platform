@@ -41,24 +41,36 @@ async def _run_all() -> None:
 
     worker_type = os.getenv("WORKER_TYPE", "all").lower()
 
+    async def _supervised(name: str, coro_factory):
+        """Run a worker with automatic restart on crash."""
+        while True:
+            try:
+                await coro_factory()
+            except asyncio.CancelledError:
+                logger.info("Worker %s cancelled", name)
+                raise
+            except Exception:
+                logger.exception("Worker %s crashed — restarting in 5s", name)
+                await asyncio.sleep(5)
+
     tasks: list[asyncio.Task] = []
 
     if worker_type in ("delivery", "all"):
-        tasks.append(asyncio.create_task(DeliveryWorker().run()))
+        tasks.append(asyncio.create_task(_supervised("delivery", lambda: DeliveryWorker().run())))
     if worker_type in ("deletion", "all"):
-        tasks.append(asyncio.create_task(DeletionWorker().run()))
+        tasks.append(asyncio.create_task(_supervised("deletion", lambda: DeletionWorker().run())))
     if worker_type in ("credit", "all"):
-        tasks.append(asyncio.create_task(CreditWorker().run()))
+        tasks.append(asyncio.create_task(_supervised("credit", lambda: CreditWorker().run())))
     if worker_type in ("daily_credit", "all"):
-        tasks.append(asyncio.create_task(DailyCreditWorker().run()))
+        tasks.append(asyncio.create_task(_supervised("daily_credit", lambda: DailyCreditWorker().run())))
     if worker_type in ("expiry", "all"):
-        tasks.append(asyncio.create_task(ExpiryWorker().run()))
+        tasks.append(asyncio.create_task(_supervised("expiry", lambda: ExpiryWorker().run())))
     if worker_type in ("expiry_notify", "all"):
-        tasks.append(asyncio.create_task(ExpiryNotifyWorker().run()))
+        tasks.append(asyncio.create_task(_supervised("expiry_notify", lambda: ExpiryNotifyWorker().run())))
     if worker_type in ("payment_recheck", "all"):
-        tasks.append(asyncio.create_task(PaymentRecheckWorker().run()))
+        tasks.append(asyncio.create_task(_supervised("payment_recheck", lambda: PaymentRecheckWorker().run())))
     if worker_type in ("low_credit_notify", "all"):
-        tasks.append(asyncio.create_task(LowCreditNotifyWorker().run()))
+        tasks.append(asyncio.create_task(_supervised("low_credit_notify", lambda: LowCreditNotifyWorker().run())))
 
     if not tasks:
         logger.error("Unknown WORKER_TYPE=%s", worker_type)

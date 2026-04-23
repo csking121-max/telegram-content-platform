@@ -33,9 +33,12 @@ interface UserDetail {
   memberships: MembershipInfo[];
 }
 
+const PAGE_SIZE = 50;
+
 export default function Users() {
+  const [page, setPage] = useState(0);
   const { data: users, loading, error, refetch } = useFetch(
-    useCallback(() => getUsers(), []),
+    useCallback(() => getUsers(page * PAGE_SIZE, PAGE_SIZE), [page]),
   );
 
   const [selected, setSelected] = useState<UserDetail | null>(null);
@@ -181,6 +184,19 @@ export default function Users() {
             ))}
           </tbody>
         </table>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+          <button disabled={page === 0} onClick={() => setPage((p) => p - 1)} style={btnPrimary}>
+            ← Prev
+          </button>
+          <span style={{ fontSize: 13 }}>Page {page + 1}</span>
+          <button
+            disabled={!users || users.length < PAGE_SIZE}
+            onClick={() => setPage((p) => p + 1)}
+            style={btnPrimary}
+          >
+            Next →
+          </button>
+        </div>
       </div>
 
       {/* ── Right: Detail panel ──────────────────────────── */}

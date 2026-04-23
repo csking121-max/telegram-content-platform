@@ -12,7 +12,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -194,13 +194,23 @@ class PaymentOrderService:
 
     async def _grant_access(self, order_ref: str, user_id: int) -> None:
         """Grant membership + optional credits (for plans) or credits (for credit packages)."""
+        # Atomic guard: only proceed if we are the one to flip status to 'verified'
+        # This prevents double-grant when two workers process the same order concurrently.
+        claim_result = await self.db.execute(
+            sa_update(PaymentOrder)
+            .where(
+                PaymentOrder.order_ref == order_ref,
+                PaymentOrder.status != "verified",
+            )
+            .values(status="verified", verified_at=_utcnow())
+        )
+        if claim_result.rowcount == 0:
+            logger.debug("Order %s already verified — skipping grant", order_ref)
+            return
+        await self.db.flush()
+
         order = await self._get_order(order_ref)
         if not order:
-            return
-
-        # Guard: prevent double-grant if order already verified
-        if order.status == "verified":
-            logger.debug("Order %s already verified — skipping grant", order_ref)
             return
 
         # ── Credit package order (plan_id is NULL) ─────────────
@@ -252,10 +262,6 @@ class PaymentOrderService:
                     "Credit package granted: user=%d pkg=%s credits=%d",
                     user_id, pkg.name, pkg.credits,
                 )
-            # Mark order as verified after successful credit grant
-            order.status = "verified"
-            order.verified_at = _utcnow()
-            await self.db.flush()
             return
 
         # ── Membership plan order ────────────────────────────
@@ -291,11 +297,6 @@ class PaymentOrderService:
                 "credit_reward": plan.credit_reward,
             },
         )
-
-        # Mark order as verified after successful membership grant
-        order.status = "verified"
-        order.verified_at = _utcnow()
-        await self.db.flush()
 
         logger.info(
             "Access granted: user=%d plan=%s membership=%s for %d days",

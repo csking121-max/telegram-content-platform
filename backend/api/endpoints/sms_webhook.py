@@ -13,12 +13,15 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+import secrets as _secrets
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import settings
 from backend.dependencies import get_db
 from backend.models.bot import Bot
 from backend.models.payment_order import PaymentOrder
@@ -31,6 +34,21 @@ from backend.api.endpoints.internal import verify_internal_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _verify_sms_key(
+    x_internal_key: str = Header(default=""),
+    key: str = Query(default=""),
+) -> None:
+    """Accept INTERNAL_API_KEY via X-Internal-Key header OR ?key= query param.
+    Supports SMS Forwarder apps (like Gawkr) that cannot set custom headers.
+    """
+    configured = settings.INTERNAL_API_KEY
+    if not configured:
+        raise HTTPException(status_code=503, detail="Internal API key not configured")
+    provided = x_internal_key or key
+    if not provided or not _secrets.compare_digest(provided, configured):
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
 
 # ── shared helper: process SMS → auto-match → auto-grant ────────────
@@ -221,7 +239,7 @@ async def telegram_proxy(
 async def sms_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    _auth: None = Depends(verify_internal_key),
+    _auth: None = Depends(_verify_sms_key),
 ):
     """
     Universal webhook for SMS Forwarder apps in URL/Webhook mode.

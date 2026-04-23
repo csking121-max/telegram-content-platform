@@ -24,6 +24,7 @@ import WelcomeMessageBuilder from "./pages/WelcomeMessageBuilder";
 import ContentFactory from "./pages/ContentFactory";
 import ContentManager from "./pages/ContentManager";
 import Tutorials from "./pages/Tutorials";
+import Backups from "./pages/Backups";
 
 export default function App() {
   return (
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="/content-factory" element={<ContentFactory />} />
           <Route path="/content-manager" element={<ContentManager />} />
           <Route path="/tutorials" element={<Tutorials />} />
+          <Route path="/backups" element={<Backups />} />
         </Route>
       </Route>
     </Routes>

@@ -7,7 +7,7 @@ Public payment flow endpoints:
   - POST /payments/group-utr      → receive bank SMS text from Telegram group
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,8 +32,17 @@ from backend.services.user_service import UserService
 from backend.engines.credit_engine import CreditEngine
 from backend.engines.membership_engine import MembershipEngine
 from backend.api.endpoints.internal import verify_internal_key
+from backend.security.rate_limiter import RateLimiter
 
 router = APIRouter()
+
+_pay_limiter = RateLimiter(max_requests=10, window_seconds=60)
+
+
+def _rate_limit_by_ip(request: Request) -> None:
+    """Rate limit payment mutations by client IP (10 req/min)."""
+    client_ip = request.client.host if request.client else "unknown"
+    _pay_limiter.check(f"pay:{client_ip}")
 
 
 @router.get("/plans", response_model=list[MembershipPlanRead])
@@ -47,7 +56,9 @@ async def list_plans(db: AsyncSession = Depends(get_db)):
 @router.post("/create-order", response_model=QrCodeResponse)
 async def create_payment_order(
     body: PaymentOrderCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    _rl: None = Depends(_rate_limit_by_ip),
 ):
     """
     Create a payment order for a membership plan.
@@ -90,7 +101,9 @@ async def create_payment_order(
 @router.post("/submit-utr", response_model=UtrVerifyResponse)
 async def submit_utr(
     body: UtrSubmit,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    _rl: None = Depends(_rate_limit_by_ip),
 ):
     """
     User submits UTR number after making UPI payment.
@@ -134,7 +147,9 @@ class RetryOrderPayload(BaseModel):
 @router.post("/retry-order")
 async def retry_payment_order(
     body: RetryOrderPayload,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    _rl: None = Depends(_rate_limit_by_ip),
 ):
     """
     Retry a failed or expired payment order — resets it to 'pending'

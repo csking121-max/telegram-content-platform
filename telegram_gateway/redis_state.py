@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+from collections import OrderedDict
 from typing import Optional
 
 import redis
@@ -20,12 +22,63 @@ STATE_TTL = 1800  # 30 minutes — auto-expire stale entries
 
 _pool: redis.ConnectionPool | None = None
 
+# ── Bounded fallback structures (used only if Redis is down) ──
+_FALLBACK_MAX_SIZE = 500
+_FALLBACK_TTL = 1800  # 30 minutes — same as Redis TTL
+
 
 def _get_client() -> redis.Redis:
     global _pool
     if _pool is None:
         _pool = redis.ConnectionPool.from_url(REDIS_URL, decode_responses=True, max_connections=5)
     return redis.Redis(connection_pool=_pool)
+
+
+# ── In-memory fallbacks (used only if Redis is down) ─────────
+# Bounded OrderedDicts with timestamps for TTL enforcement.
+_fallback_pending: OrderedDict[int, tuple[str, float]] = OrderedDict()   # tid → (value, ts)
+_fallback_utr: OrderedDict[int, float] = OrderedDict()                  # tid → ts
+_fallback_custom: OrderedDict[int, float] = OrderedDict()               # tid → ts
+_fallback_bug: OrderedDict[int, float] = OrderedDict()                  # tid → ts
+
+
+def _fb_prune(store: OrderedDict, max_size: int = _FALLBACK_MAX_SIZE) -> None:
+    """Remove expired entries and evict oldest if over max size."""
+    now = time.monotonic()
+    expired = [k for k, v in store.items()
+               if now - (v[1] if isinstance(v, tuple) else v) > _FALLBACK_TTL]
+    for k in expired:
+        store.pop(k, None)
+    while len(store) > max_size:
+        store.popitem(last=False)
+
+
+def _fb_set_val(store: OrderedDict, key: int, val: object) -> None:
+    """Set a value in a fallback dict with TTL and size enforcement."""
+    _fb_prune(store)
+    store[key] = val
+    store.move_to_end(key)
+
+
+def _fb_get_pending(tid: int) -> Optional[str]:
+    entry = _fallback_pending.get(tid)
+    if entry is None:
+        return None
+    val, ts = entry
+    if time.monotonic() - ts > _FALLBACK_TTL:
+        _fallback_pending.pop(tid, None)
+        return None
+    return val
+
+
+def _fb_has(store: OrderedDict, tid: int) -> bool:
+    ts = store.get(tid)
+    if ts is None:
+        return False
+    if time.monotonic() - ts > _FALLBACK_TTL:
+        store.pop(tid, None)
+        return False
+    return True
 
 
 # ── Pending orders: telegram_id → order_ref ──────────────────
@@ -35,7 +88,7 @@ def set_pending_order(telegram_id: int, order_ref: str) -> None:
         _get_client().setex(f"gw:pending:{telegram_id}", STATE_TTL, order_ref)
     except Exception:
         logger.debug("Redis unavailable for set_pending_order, using fallback")
-        _fallback_pending[telegram_id] = order_ref
+        _fb_set_val(_fallback_pending, telegram_id, (order_ref, time.monotonic()))
 
 
 def get_pending_order(telegram_id: int) -> Optional[str]:
@@ -45,7 +98,7 @@ def get_pending_order(telegram_id: int) -> Optional[str]:
             return val
     except Exception:
         pass
-    return _fallback_pending.get(telegram_id)
+    return _fb_get_pending(telegram_id)
 
 
 def clear_pending_order(telegram_id: int) -> None:
@@ -62,14 +115,14 @@ def set_awaiting_utr(telegram_id: int) -> None:
     try:
         _get_client().setex(f"gw:utr:{telegram_id}", STATE_TTL, "1")
     except Exception:
-        _fallback_utr.add(telegram_id)
+        _fb_set_val(_fallback_utr, telegram_id, time.monotonic())
 
 
 def is_awaiting_utr(telegram_id: int) -> bool:
     try:
         return _get_client().exists(f"gw:utr:{telegram_id}") > 0
     except Exception:
-        return telegram_id in _fallback_utr
+        return _fb_has(_fallback_utr, telegram_id)
 
 
 def clear_awaiting_utr(telegram_id: int) -> None:
@@ -77,7 +130,7 @@ def clear_awaiting_utr(telegram_id: int) -> None:
         _get_client().delete(f"gw:utr:{telegram_id}")
     except Exception:
         pass
-    _fallback_utr.discard(telegram_id)
+    _fallback_utr.pop(telegram_id, None)
 
 
 # ── Awaiting custom credits: telegram_id set ─────────────────
@@ -86,14 +139,14 @@ def set_awaiting_custom_credits(telegram_id: int) -> None:
     try:
         _get_client().setex(f"gw:custcr:{telegram_id}", STATE_TTL, "1")
     except Exception:
-        _fallback_custom.add(telegram_id)
+        _fb_set_val(_fallback_custom, telegram_id, time.monotonic())
 
 
 def is_awaiting_custom_credits(telegram_id: int) -> bool:
     try:
         return _get_client().exists(f"gw:custcr:{telegram_id}") > 0
     except Exception:
-        return telegram_id in _fallback_custom
+        return _fb_has(_fallback_custom, telegram_id)
 
 
 def clear_awaiting_custom_credits(telegram_id: int) -> None:
@@ -101,14 +154,7 @@ def clear_awaiting_custom_credits(telegram_id: int) -> None:
         _get_client().delete(f"gw:custcr:{telegram_id}")
     except Exception:
         pass
-    _fallback_custom.discard(telegram_id)
-
-
-# ── In-memory fallbacks (used only if Redis is down) ─────────
-_fallback_pending: dict[int, str] = {}
-_fallback_utr: set[int] = set()
-_fallback_custom: set[int] = set()
-_fallback_bug: set[int] = set()
+    _fallback_custom.pop(telegram_id, None)
 
 
 # ── Awaiting bug report: telegram_id set ─────────────────────
@@ -117,14 +163,14 @@ def set_awaiting_bug_report(telegram_id: int) -> None:
     try:
         _get_client().setex(f"gw:bug:{telegram_id}", STATE_TTL, "1")
     except Exception:
-        _fallback_bug.add(telegram_id)
+        _fb_set_val(_fallback_bug, telegram_id, time.monotonic())
 
 
 def is_awaiting_bug_report(telegram_id: int) -> bool:
     try:
         return _get_client().exists(f"gw:bug:{telegram_id}") > 0
     except Exception:
-        return telegram_id in _fallback_bug
+        return _fb_has(_fallback_bug, telegram_id)
 
 
 def clear_awaiting_bug_report(telegram_id: int) -> None:
@@ -132,4 +178,4 @@ def clear_awaiting_bug_report(telegram_id: int) -> None:
         _get_client().delete(f"gw:bug:{telegram_id}")
     except Exception:
         pass
-    _fallback_bug.discard(telegram_id)
+    _fallback_bug.pop(telegram_id, None)

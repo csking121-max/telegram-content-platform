@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _queue: list[dict] = []
 _queue_lock = asyncio.Lock()
 _flush_task: asyncio.Task | None = None
+_MAX_QUEUE_SIZE = 10_000
 
 FLUSH_INTERVAL = 5  # seconds
 
@@ -34,6 +35,11 @@ async def track(bot_id: int, chat_id: int, message_id: int, direction: str = "ou
             "message_id": message_id,
             "direction": direction,
         })
+        # Drop oldest entries if queue grows too large (backend is unreachable)
+        if len(_queue) > _MAX_QUEUE_SIZE:
+            overflow = len(_queue) - _MAX_QUEUE_SIZE
+            del _queue[:overflow]
+            logger.warning("Message tracker queue overflow — dropped %d oldest entries", overflow)
 
 
 async def _flush() -> None:

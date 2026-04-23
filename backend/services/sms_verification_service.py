@@ -22,8 +22,10 @@ from backend.models.payment_order import PaymentOrder
 
 logger = logging.getLogger(__name__)
 
-# Maximum age of an SMS to be accepted for matching (prevents old SMS reuse)
-SMS_MAX_AGE_HOURS = 24
+# Maximum age of an SMS to be accepted for matching (prevents old SMS reuse).
+# 30 minutes is generous enough for bank SMS forwarding delays while still
+# blocking replay attacks with stale messages.
+SMS_MAX_AGE_MINUTES = 30
 # Amount tolerance for matching (₹0.01 for rounding only)
 AMOUNT_TOLERANCE = 0.01
 
@@ -104,8 +106,8 @@ class SmsVerificationService:
 
         # SEC-8: Reject SMS that are too old to prevent replay attacks
         age = _utcnow() - (received_at if received_at.tzinfo else received_at.replace(tzinfo=timezone.utc))
-        if age > timedelta(hours=SMS_MAX_AGE_HOURS):
-            logger.warning("Rejected stale SMS (age=%s hours): sender=%s", age.total_seconds() / 3600, sender)
+        if age > timedelta(minutes=SMS_MAX_AGE_MINUTES):
+            logger.warning("Rejected stale SMS (age=%s min): sender=%s", age.total_seconds() / 60, sender)
             # Still store for audit, but don't auto-match
             utr = extract_utr(body)
             amount = extract_amount(body)

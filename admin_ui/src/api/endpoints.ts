@@ -279,6 +279,32 @@ export const deletePlatformSetting = (key: string) =>
 export const triggerLowCreditNotifications = () =>
   apiClient.post<{ detail: string; sent: number; failed: number; total_qualifying: number }>("/admin/notifications/trigger-low-credit").then((r) => r.data);
 
+/* ── Cooldowns ─────────────────────────────────────────── */
+
+export interface CooldownRecord {
+  id: number;
+  user_id: number;
+  telegram_id: number;
+  username: string;
+  access_count: number;
+  exceeded_at: string;
+  cooldown_until: string;
+  remaining_seconds: number;
+  reason: string;
+}
+
+export const getActiveCooldowns = () =>
+  apiClient.get<{ cooldowns: CooldownRecord[]; total: number }>("/admin/cooldowns").then((r) => r.data);
+
+export const removeCooldown = (cooldownId: number) =>
+  apiClient.delete(`/admin/cooldowns/${cooldownId}`).then((r) => r.data);
+
+export const extendCooldown = (cooldownId: number, additionalSeconds: number) =>
+  apiClient.post(`/admin/cooldowns/${cooldownId}/extend`, { additional_seconds: additionalSeconds }).then((r) => r.data);
+
+export const clearExpiredCooldowns = () =>
+  apiClient.post<{ detail: string }>("/admin/cooldowns/clear-expired").then((r) => r.data);
+
 /* ── Test Panel ────────────────────────────────────────── */
 
 export interface TestResult {
@@ -552,10 +578,11 @@ export const purgeDlq = (queue: string) =>
 
 /* ── Content Factory ───────────────────────────────────── */
 
-export const uploadVideo = (file: File, onProgress?: (pct: number, loaded?: number) => void, botId?: number, blur?: string) => {
+export const uploadVideo = (file: File, onProgress?: (pct: number, loaded?: number) => void, botId?: number, blur?: string, autoThumb?: boolean) => {
   const params = new URLSearchParams();
   if (botId) params.set("bot_id", String(botId));
   if (blur && blur !== "none") params.set("blur", blur);
+  if (autoThumb === false) params.set("auto_thumb", "false");
   const qs = params.toString();
   // Dynamic timeout: 10 min base + 1 min per 10 MB (e.g. 500 MB → 60 min)
   const sizeMB = file.size / (1024 * 1024);
@@ -662,4 +689,15 @@ export const deleteDefaultThumbnail = (id: number) =>
 
 export const deletePublishJob = (jobId: string) =>
   apiClient.delete(`/admin/content-factory/jobs/${jobId}`).then((r) => r.data);
+
+/* ── Backups ───────────────────────────────────────────── */
+
+export const getBackups = () =>
+  apiClient.get("/admin/backups").then((r) => r.data);
+
+export const triggerBackup = () =>
+  apiClient.post("/admin/backups/trigger").then((r) => r.data);
+
+export const downloadBackup = (filename: string) =>
+  apiClient.get(`/admin/backups/${filename}/download`, { responseType: "blob" }).then((r) => r.data);
 

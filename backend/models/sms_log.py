@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -15,6 +15,15 @@ from backend.database import Base
 
 class SmsLog(Base):
     __tablename__ = "sms_logs"
+    __table_args__ = (
+        # Prevent the same UTR from being matched to multiple orders
+        Index(
+            "ix_sms_logs_utr_matched_unique",
+            "utr_extracted",
+            unique=True,
+            postgresql_where="matched = true AND utr_extracted IS NOT NULL",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sender: Mapped[str] = mapped_column(String(64), nullable=False)

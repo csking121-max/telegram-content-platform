@@ -12,6 +12,7 @@ All backend calls use /internal/* endpoints (no JWT required).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import OrderedDict
@@ -75,18 +76,23 @@ def _prune_stale_sessions() -> None:
 # ---------------------------------------------------------------------------
 _MAX_HANDLED = 10_000
 _handled_upload_messages: OrderedDict[tuple[int, int], None] = OrderedDict()
+_claim_lock = asyncio.Lock()
 
 
-def _claim_message(message: Message) -> bool:
-    """Return True if this bot is the first to handle this message."""
+async def _claim_message(message: Message) -> bool:
+    """Return True if this bot is the first to handle this message.
+
+    Uses asyncio.Lock to make the check-then-insert atomic across coroutines.
+    """
     key = (message.chat.id, message.message_id)
-    if key in _handled_upload_messages:
-        return False
-    _handled_upload_messages[key] = None
-    # Evict oldest entries if over limit
-    while len(_handled_upload_messages) > _MAX_HANDLED:
-        _handled_upload_messages.popitem(last=False)
-    return True
+    async with _claim_lock:
+        if key in _handled_upload_messages:
+            return False
+        _handled_upload_messages[key] = None
+        # Evict oldest entries if over limit
+        while len(_handled_upload_messages) > _MAX_HANDLED:
+            _handled_upload_messages.popitem(last=False)
+        return True
 
 
 # -- /upload -- start media collection --------------------------
@@ -104,7 +110,7 @@ async def handle_upload(message: Message) -> None:
 
     # With multiple bots in the same group, only the first bot to claim the
     # message responds — prevents duplicate "Upload Mode Active" messages.
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
 
     _prune_stale_sessions()
@@ -143,7 +149,7 @@ async def collect_media(message: Message) -> None:
 
     if not session:
         return
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
 
     if session["state"] == "awaiting_thumbnail":
@@ -218,7 +224,7 @@ async def collect_media(message: Message) -> None:
 @upload_router.message(Command("publish"))
 async def handle_publish(message: Message) -> None:
     chat_id = message.chat.id
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
     session = _get_session(chat_id)
 
@@ -395,7 +401,7 @@ async def handle_credit_mode_selection(callback: CallbackQuery) -> None:
 @upload_router.message(Command("confirm"))
 async def handle_confirm(message: Message) -> None:
     chat_id = message.chat.id
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
     session = _get_session(chat_id)
 
@@ -420,7 +426,7 @@ async def handle_text_in_session(message: Message) -> None:
 
     if not session:
         return
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
 
     # Handle credit amount input
@@ -464,7 +470,7 @@ async def handle_text_in_session(message: Message) -> None:
 @upload_router.message(Command("cancel"))
 async def handle_cancel(message: Message) -> None:
     chat_id = message.chat.id
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
     if chat_id in _upload_sessions:
         del _upload_sessions[chat_id]
@@ -486,7 +492,7 @@ async def handle_announce(message: Message) -> None:
     if message.chat.type not in ("group", "supergroup"):
         await message.answer("This command only works in the Storage Group.")
         return
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
 
     # Check if text was provided inline: /announce Hello everyone
@@ -555,7 +561,7 @@ async def handle_announce_bot_selection(callback: CallbackQuery) -> None:
 @upload_router.message(Command("cancelannounce"))
 async def handle_cancel_announce(message: Message) -> None:
     chat_id = message.chat.id
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
     if chat_id in _announce_sessions:
         del _announce_sessions[chat_id]
@@ -576,7 +582,7 @@ async def handle_announce_text(message: Message) -> None:
     session = _announce_sessions.get(chat_id)
     if not session or session["state"] != "awaiting_text":
         return
-    if not _claim_message(message):
+    if not await _claim_message(message):
         return
 
     await _send_announcement(message, session, message.text.strip())

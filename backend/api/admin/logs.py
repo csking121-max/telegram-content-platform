@@ -24,6 +24,7 @@ LOG_DIR = Path("data")
 KNOWN_LOG_FILES = {
     "backend": "backend.log",
     "gateway": "gateway.log",
+    "backup": "backup.log",
 }
 
 

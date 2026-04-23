@@ -221,6 +221,7 @@ export interface UploadedVideo {
   bot_id: number;
   blur: string;
   thumbnail_file_id?: string;
+  thumbTimestamp?: number;   // timestamp used for extracted frame (for re-extract on blur change)
   uploading: boolean;
   uploaded: boolean;  // true once upload to TG succeeded
   error?: string;

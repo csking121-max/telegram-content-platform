@@ -54,22 +54,25 @@ class CreditEngine:
         await self.ensure_account(user_id)
 
         # Atomic deduction: single UPDATE that checks balance in the WHERE clause
-        result = await self.db.execute(
+        # Use RETURNING to get the new balance in the same statement (no race window)
+        stmt = (
             update(Credit)
             .where(Credit.user_id == user_id, Credit.balance >= amount)
             .values(balance=Credit.balance - amount)
+            .returning(Credit.balance)
         )
-        if result.rowcount == 0:
+        result = await self.db.execute(stmt)
+        row = result.fetchone()
+        if row is None:
             # Re-fetch for the error message
             bal = await self.get_balance(user_id)
             raise ValueError(
                 f"Insufficient credits: have {bal}, need {amount}"
             )
 
+        new_balance = row[0]
         self._record(user_id, -amount, reason)
         await self.db.flush()
-
-        new_balance = await self.get_balance(user_id)
         logger.info("Deducted %s credits from user=%s reason=%s", amount, user_id, reason)
 
         # Track spend for daily streak

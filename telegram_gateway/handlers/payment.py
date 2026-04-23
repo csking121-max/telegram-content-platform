@@ -143,7 +143,11 @@ async def handle_plan_credits_purchase(callback: CallbackQuery) -> None:
     if not user or not callback.data:
         return
 
-    plan_id = int(callback.data.split(":")[1])
+    try:
+        plan_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.answer("Invalid selection.", show_alert=True)
+        return
     await callback.answer("Processing credit purchase...")
 
     result = await api_post("/payments/buy-with-credits", {
@@ -210,7 +214,11 @@ async def handle_plan_selection(callback: CallbackQuery) -> None:
     if not user or not callback.data:
         return
 
-    plan_id = int(callback.data.split(":")[1])
+    try:
+        plan_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.answer("Invalid selection.", show_alert=True)
+        return
     await callback.answer("Generating payment QR...")
 
     result = await api_post("/payments/create-order", {

@@ -193,6 +193,7 @@ export default function ContentFactory() {
   const [groupCreditPerItem, setGroupCreditPerItem] = useState(defaults.groupCreditPerItem ?? 1);
   const [groupBotId, setGroupBotId] = useState(0);
   const [groupThumbId, setGroupThumbId] = useState("");
+  const [autoThumb, setAutoThumb] = useState(true);
 
   // Persist uploads to sessionStorage so tab switches don't lose them
   useEffect(() => {
@@ -239,19 +240,20 @@ export default function ContentFactory() {
       }
       return;
     }
-    if (pollRef.current) return; // already polling
-    pollRef.current = setInterval(async () => {
-      try {
-        const updated = await getPublishJobs();
-        setJobs(updated);
-        const stillActive = updated.some((j) => j.status === "queued" || j.status === "processing");
-        if (!stillActive && pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-          setPublishing(false);
-        }
-      } catch { /* ignore */ }
-    }, 2000);
+    if (!pollRef.current) {
+      pollRef.current = setInterval(async () => {
+        try {
+          const updated = await getPublishJobs();
+          setJobs(updated);
+          const stillActive = updated.some((j) => j.status === "queued" || j.status === "processing");
+          if (!stillActive && pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+            setPublishing(false);
+          }
+        } catch { /* ignore */ }
+      }, 2000);
+    }
     return () => {
       if (pollRef.current) {
         clearInterval(pollRef.current);
@@ -307,7 +309,7 @@ export default function ContentFactory() {
   // Upload staged files to Telegram — concurrent with configurable parallelism
   const UPLOAD_CONCURRENCY = 3;
 
-  const uploadSingleFile = useCallback(async (v: UploadedVideo) => {
+  const uploadSingleFile = useCallback(async (v: UploadedVideo, skipAutoThumb: boolean) => {
     if (!v.file) return;
     const startTime = Date.now();
     const totalBytes = v.file.size;
@@ -331,6 +333,7 @@ export default function ContentFactory() {
         },
         v.upload_bot_id || undefined,
         v.blur,
+        skipAutoThumb ? false : undefined,
       );
       setVideos((prev) =>
         prev.map((x) =>
@@ -379,9 +382,9 @@ export default function ContentFactory() {
     // Process in batches of UPLOAD_CONCURRENCY
     for (let i = 0; i < staged.length; i += UPLOAD_CONCURRENCY) {
       const batch = staged.slice(i, i + UPLOAD_CONCURRENCY);
-      await Promise.all(batch.map((v) => uploadSingleFile(v)));
+      await Promise.all(batch.map((v) => uploadSingleFile(v, !autoThumb)));
     }
-  }, [videos, uploadSingleFile]);
+  }, [videos, uploadSingleFile, autoThumb]);
 
   // Retry all failed uploads
   const handleRetryFailed = useCallback(async () => {
@@ -397,9 +400,9 @@ export default function ContentFactory() {
 
     for (let i = 0; i < failed.length; i += UPLOAD_CONCURRENCY) {
       const batch = failed.slice(i, i + UPLOAD_CONCURRENCY);
-      await Promise.all(batch.map((v) => uploadSingleFile(v)));
+      await Promise.all(batch.map((v) => uploadSingleFile(v, !autoThumb)));
     }
-  }, [videos, uploadSingleFile]);
+  }, [videos, uploadSingleFile, autoThumb]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -422,6 +425,21 @@ export default function ContentFactory() {
 
   const updateVideo = (id: string, patch: Partial<UploadedVideo>) => {
     setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+  };
+
+  // Re-extract thumbnail when blur changes and a frame was previously picked
+  const handleBlurChange = async (v: UploadedVideo, newBlur: string) => {
+    updateVideo(v.id, { blur: newBlur });
+    if (v.thumbTimestamp !== undefined && v.file && v.media_type === "video") {
+      try {
+        const result = await extractFrame(v.file, v.thumbTimestamp, newBlur);
+        if (result.file_id) {
+          updateVideo(v.id, { thumbnail_file_id: result.file_id });
+        }
+      } catch {
+        // silently fail — old thumbnail remains
+      }
+    }
   };
 
   const removeVideo = (id: string) => {
@@ -545,8 +563,9 @@ export default function ContentFactory() {
 
       await publishContent(payload);
 
-      // Clear upload area — job now lives in DB
-      setVideos([]);
+      // Remove only the published videos — keep uploading/staged/failed ones
+      const publishedIds = new Set(readyVideos.map((v) => v.id));
+      setVideos((prev) => prev.filter((v) => !publishedIds.has(v.id)));
 
       // Reload jobs to show the newly created one
       _loadJobs();
@@ -573,12 +592,14 @@ export default function ContentFactory() {
     onUpload,
     videoFile,
     blur,
+    onFramePicked,
   }: {
     value: string;
     onChange: (fileId: string) => void;
     onUpload: (file: File) => void;
     videoFile?: File | null;
     blur?: string;
+    onFramePicked?: (fileId: string, timestamp: number) => void;
   }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [showPicker, setShowPicker] = useState(false);
@@ -602,7 +623,8 @@ export default function ContentFactory() {
       try {
         const result = await extractFrame(videoFile, timestamp, blur);
         if (result.file_id) {
-          onChange(result.file_id);
+          if (onFramePicked) onFramePicked(result.file_id, timestamp);
+          else onChange(result.file_id);
           setShowPicker(false);
         }
       } catch {
@@ -1070,7 +1092,35 @@ export default function ContentFactory() {
               ({UPLOAD_CONCURRENCY} files upload simultaneously)
             </span>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", userSelect: "none" }}>
+              <div
+                onClick={() => setAutoThumb((p) => !p)}
+                style={{
+                  width: 36,
+                  height: 20,
+                  borderRadius: 10,
+                  background: autoThumb ? "#2a5db0" : "#ccc",
+                  position: "relative",
+                  transition: "background 0.2s",
+                  cursor: "pointer",
+                }}
+              >
+                <div
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    background: "#fff",
+                    position: "absolute",
+                    top: 2,
+                    left: autoThumb ? 18 : 2,
+                    transition: "left 0.2s",
+                  }}
+                />
+              </div>
+              Auto Thumbnail
+            </label>
             {failedVideos.length > 0 && (
               <button
                 onClick={handleRetryFailed}
@@ -1329,7 +1379,7 @@ export default function ContentFactory() {
                       <td style={tdStyle}>
                         <select
                           value={v.blur}
-                          onChange={(e) => updateVideo(v.id, { blur: e.target.value })}
+                          onChange={(e) => handleBlurChange(v, e.target.value)}
                           style={{ ...select_, minWidth: 100 }}
                           disabled={v.uploaded}
                           title={v.uploaded ? "Already uploaded" : "Blur level for auto-thumbnail"}
@@ -1343,10 +1393,11 @@ export default function ContentFactory() {
                       <td style={tdStyle}>
                         <ThumbSelector
                           value={v.thumbnail_file_id || ""}
-                          onChange={(fid) => updateVideo(v.id, { thumbnail_file_id: fid || undefined })}
+                          onChange={(fid) => updateVideo(v.id, { thumbnail_file_id: fid || undefined, thumbTimestamp: undefined })}
                           onUpload={(file) => handleThumbUpload(v.id, file)}
                           videoFile={v.media_type === "video" ? v.file : undefined}
                           blur={v.blur}
+                          onFramePicked={(fid, ts) => updateVideo(v.id, { thumbnail_file_id: fid, thumbTimestamp: ts })}
                         />
                       </td>
                     </>

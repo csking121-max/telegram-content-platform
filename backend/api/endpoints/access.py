@@ -16,6 +16,8 @@ from backend.models.credit import Credit
 from backend.models.membership import Membership
 from backend.models.user import User
 from backend.services.activity_logger import ActivityLogger
+from backend.services.cooldown_service import CooldownService
+from backend.services.platform_settings_service import PlatformSettingsService
 from backend.api.endpoints.internal import verify_internal_key
 
 router = APIRouter()
@@ -30,20 +32,71 @@ async def check_access(
     Evaluate whether a user may access a pack.
 
     Returns AccessResponse with allowed/denied + reason.
+    
+    Checks:
+    1. Cooldown: User must not be in cooldown period (exceeded link access limit)
+    2. Access Control: Token, credits, membership validation
     """
+    # Resolve user_id from telegram_id
+    log_user_id: int = 0
+    if body.telegram_id:
+        from sqlalchemy import select as _sel
+        _u = await db.execute(_sel(User.id).where(User.telegram_id == body.telegram_id))
+        log_user_id = _u.scalar_one_or_none() or 0
+
+    # Check cooldown BEFORE access control
+    if log_user_id:
+        cooldown_svc = CooldownService(db)
+        active_cooldown = await cooldown_svc.get_cooldown_for_user(log_user_id)
+        if active_cooldown:
+            remaining = int((active_cooldown.cooldown_until - __import__("datetime").datetime.now(__import__("datetime").timezone.utc)).total_seconds())
+            reason = f"User is in cooldown. Remaining time: {max(remaining, 0)} seconds"
+            
+            # Log denied access
+            activity = ActivityLogger(db)
+            await activity.log(
+                user_id=log_user_id,
+                action="access_check",
+                payload={"token": body.token, "allowed": False, "reason": "cooldown_active", "remaining_seconds": max(remaining, 0)},
+            )
+            await db.commit()
+            raise HTTPException(status_code=429, detail=reason)
+
+    # Perform standard access control check
     engine = AccessControlEngine(db)
     result: AccessResponse = await engine.check(
         telegram_id=body.telegram_id,
         token_str=body.token,
     )
 
-    # Log access check — resolve user_id from telegram_id (skip if not found)
+    # If access is allowed, increment link access count
+    if result.allowed and log_user_id:
+        cooldown_svc = CooldownService(db)
+        settings_svc = PlatformSettingsService(db)
+        
+        cooldown_links_limit = await settings_svc.get_int("cooldown_links_limit", 5)
+        cooldown_seconds = await settings_svc.get_int("cooldown_seconds", 3600)
+        
+        access_count, should_cooldown = await cooldown_svc.increment_access_count(
+            log_user_id,
+            cooldown_links_limit,
+            cooldown_seconds,
+        )
+        
+        if should_cooldown:
+            # Apply cooldown
+            await cooldown_svc.apply_cooldown(
+                user_id=log_user_id,
+                cooldown_seconds=cooldown_seconds,
+                access_count=access_count,
+                cooldown_links_limit=cooldown_links_limit,
+            )
+            await db.commit()
+            reason = f"Link access limit ({cooldown_links_limit}) exceeded. Cooldown applied for {cooldown_seconds} seconds."
+            raise HTTPException(status_code=429, detail=reason)
+
+    # Log access check
     activity = ActivityLogger(db)
-    log_user_id: int = 0
-    if body.telegram_id:
-        from sqlalchemy import select as _sel
-        _u = await db.execute(_sel(User.id).where(User.telegram_id == body.telegram_id))
-        log_user_id = _u.scalar_one_or_none() or 0
     if log_user_id:
         await activity.log(
             user_id=log_user_id,
@@ -67,109 +120,110 @@ async def get_user_profile(
     """
     Get user profile with membership, credit, ad-watch, daily-pass, and referral info.
     Called by the Telegram bot to show user dashboard.
+
+    Optimised: uses parallel queries and JOINs to avoid N+1 per-field round-trips.
     """
+    import asyncio
     from datetime import datetime, timezone
     from sqlalchemy import func as sa_func
 
-    # Find user
+    # ── 1. Find user ─────────────────────────────────────────
     result = await db.execute(select(User).where(User.telegram_id == telegram_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
 
-    # Get credit balance
-    credit_result = await db.execute(select(Credit).where(Credit.user_id == user.id))
-    credit = credit_result.scalar_one_or_none()
-    balance = credit.balance if credit else 0
-
-    # Get active membership
     now = datetime.now(timezone.utc)
-    membership_result = await db.execute(
-        select(Membership)
-        .where(
-            Membership.user_id == user.id,
-            (Membership.expiry_at.is_(None)) | (Membership.expiry_at > now),
+
+    # ── 2. Fire independent queries concurrently ─────────────
+    async def _credit():
+        r = await db.execute(select(Credit).where(Credit.user_id == user.id))
+        c = r.scalar_one_or_none()
+        return c.balance if c else 0
+
+    async def _memberships():
+        r = await db.execute(
+            select(Membership)
+            .where(
+                Membership.user_id == user.id,
+                (Membership.expiry_at.is_(None)) | (Membership.expiry_at > now),
+            )
+            .order_by(Membership.start_at.desc())
         )
-        .order_by(Membership.start_at.desc())
+        return list(r.scalars().all())
+
+    async def _ad_watch():
+        try:
+            from backend.models.ad_watch_token import AdWatchToken
+            r = await db.execute(
+                select(AdWatchToken)
+                .where(
+                    AdWatchToken.user_id == user.id,
+                    AdWatchToken.activated == True,
+                    AdWatchToken.expires_at > now,
+                )
+                .order_by(AdWatchToken.expires_at.desc())
+                .limit(1)
+            )
+            token = r.scalar_one_or_none()
+            if token:
+                return True, token.expires_at.isoformat() if token.expires_at else ""
+        except Exception:
+            pass
+        return False, ""
+
+    async def _referral_stats():
+        try:
+            from backend.models.referral import Referral
+            from backend.models.credit_history import CreditHistory
+            r1 = await db.execute(
+                select(sa_func.count()).select_from(Referral).where(Referral.inviter_id == user.id)
+            )
+            count = r1.scalar() or 0
+            r2 = await db.execute(
+                select(sa_func.coalesce(sa_func.sum(CreditHistory.change_amount), 0))
+                .where(
+                    CreditHistory.user_id == user.id,
+                    CreditHistory.reason.like("referral%"),
+                )
+            )
+            credits = r2.scalar() or 0
+            return count, credits
+        except Exception:
+            return 0, 0
+
+    async def _streak():
+        try:
+            from backend.engines.streak_engine import StreakEngine
+            return await StreakEngine(db).get_user_streak(user.id)
+        except Exception:
+            return {}
+
+    async def _max_tier():
+        try:
+            from backend.engines.membership_engine import MembershipEngine
+            return await MembershipEngine(db).get_user_max_tier_level(user.id)
+        except Exception:
+            return 0
+
+    (
+        balance,
+        active_memberships,
+        (ad_watch_active, ad_watch_expires),
+        (referral_count, referral_credits_earned),
+        streak_info,
+        max_tier_level,
+    ) = await asyncio.gather(
+        _credit(),
+        _memberships(),
+        _ad_watch(),
+        _referral_stats(),
+        _streak(),
+        _max_tier(),
     )
-    active_memberships = list(membership_result.scalars().all())
+
     membership = active_memberships[0] if active_memberships else None
-
-    # Check daily pass
-    daily_pass_active = False
-    daily_result = await db.execute(
-        select(Membership)
-        .where(
-            Membership.user_id == user.id,
-            Membership.membership_type == "daily_pass",
-            (Membership.expiry_at.is_(None)) | (Membership.expiry_at > now),
-        )
-        .limit(1)
-    )
-    if daily_result.scalar_one_or_none():
-        daily_pass_active = True
-
-    # Check ad-watch access
-    ad_watch_active = False
-    ad_watch_expires = ""
-    try:
-        from backend.models.ad_watch_token import AdWatchToken
-        ad_result = await db.execute(
-            select(AdWatchToken)
-            .where(
-                AdWatchToken.user_id == user.id,
-                AdWatchToken.activated == True,
-                AdWatchToken.expires_at > now,
-            )
-            .order_by(AdWatchToken.expires_at.desc())
-            .limit(1)
-        )
-        ad_token = ad_result.scalar_one_or_none()
-        if ad_token:
-            ad_watch_active = True
-            ad_watch_expires = ad_token.expires_at.isoformat() if ad_token.expires_at else ""
-    except Exception:
-        pass  # Model may not exist yet
-
-    # Referral stats
-    referral_count = 0
-    referral_credits_earned = 0
-    try:
-        from backend.models.referral import Referral
-        ref_count_result = await db.execute(
-            select(sa_func.count()).select_from(Referral).where(Referral.inviter_id == user.id)
-        )
-        referral_count = ref_count_result.scalar() or 0
-
-        from backend.models.credit_history import CreditHistory
-        ref_credits_result = await db.execute(
-            select(sa_func.coalesce(sa_func.sum(CreditHistory.change_amount), 0))
-            .where(
-                CreditHistory.user_id == user.id,
-                CreditHistory.reason.like("referral%"),
-            )
-        )
-        referral_credits_earned = ref_credits_result.scalar() or 0
-    except Exception:
-        pass
-
-    # Streak info
-    streak_info = {}
-    try:
-        from backend.engines.streak_engine import StreakEngine
-        streak_engine = StreakEngine(db)
-        streak_info = await streak_engine.get_user_streak(user.id)
-    except Exception:
-        pass
-
-    # Max tier level of active memberships
-    max_tier_level = 0
-    try:
-        from backend.engines.membership_engine import MembershipEngine
-        me = MembershipEngine(db)
-        max_tier_level = await me.get_user_max_tier_level(user.id)
-    except Exception:
-        pass
+    daily_pass_active = any(m.membership_type == "daily_pass" for m in active_memberships)
 
     return {
         "telegram_id": user.telegram_id,

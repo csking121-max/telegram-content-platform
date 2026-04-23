@@ -8,8 +8,10 @@ from backend.security.auth import require_admin
 
 from . import (
     analytics,
+    backups,
     bots,
     bug_reports,
+    cooldowns,
     content_factory,
     content_packs,
     credits,
@@ -46,6 +48,7 @@ router.include_router(upi_config.router, prefix="/upi-config", tags=["admin-upi-
 router.include_router(payment_management.router, prefix="/payment-mgmt", tags=["admin-payment-mgmt"])
 router.include_router(analytics.router, prefix="/analytics", tags=["admin-analytics"])
 router.include_router(platform_settings.router, prefix="/settings", tags=["admin-settings"])
+router.include_router(cooldowns.router, prefix="/cooldowns", tags=["admin-cooldowns"])
 router.include_router(test_panel.router, prefix="/test", tags=["admin-test"])
 router.include_router(logs.router, prefix="/logs", tags=["admin-logs"])
 router.include_router(credit_packages.router, prefix="/credit-packages", tags=["admin-credit-packages"])
@@ -55,3 +58,4 @@ router.include_router(notifications.router, prefix="/notifications", tags=["admi
 router.include_router(content_factory.router, prefix="/content-factory", tags=["admin-content-factory"])
 router.include_router(bug_reports.router, prefix="/bug-reports", tags=["admin-bug-reports"])
 router.include_router(tutorials.router, prefix="/tutorials", tags=["admin-tutorials"])
+router.include_router(backups.router, prefix="/backups", tags=["admin-backups"])

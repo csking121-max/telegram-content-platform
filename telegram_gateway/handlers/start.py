@@ -68,33 +68,45 @@ _JOIN_CACHE_MAX = 10_000  # max entries before eviction
 # -- Settings cache (shared across all handlers) --
 _SETTINGS_CACHE_TTL = 60  # seconds
 _settings_cache: dict[str, object] = {"data": None, "expires": 0.0}
+_settings_lock = asyncio.Lock()
 
 
 async def _get_settings_map() -> dict[str, str]:
     """Fetch public platform settings and return as {key: value} dict.
 
     Results are cached for 60 seconds to avoid repeated HTTP calls.
+    Uses asyncio.Lock to prevent concurrent fetches (thundering herd).
     """
     now = time.monotonic()
+    # Fast path: check cache without lock
     if (
         _settings_cache["data"] is not None
         and now < _settings_cache["expires"]  # type: ignore[operator]
     ):
         return _settings_cache["data"]  # type: ignore[return-value]
 
-    try:
-        settings_data = await api_get("/settings/public")
-        if isinstance(settings_data, list):
-            result = {s["key"]: s.get("value", "") for s in settings_data}
-            _settings_cache["data"] = result
-            _settings_cache["expires"] = now + _SETTINGS_CACHE_TTL
-            return result
-    except Exception:
-        pass
-    # Return stale cache if fetch failed
-    if _settings_cache["data"] is not None:
-        return _settings_cache["data"]  # type: ignore[return-value]
-    return {}
+    async with _settings_lock:
+        # Re-check after acquiring lock (another coroutine may have refreshed)
+        now = time.monotonic()
+        if (
+            _settings_cache["data"] is not None
+            and now < _settings_cache["expires"]  # type: ignore[operator]
+        ):
+            return _settings_cache["data"]  # type: ignore[return-value]
+
+        try:
+            settings_data = await api_get("/settings/public")
+            if isinstance(settings_data, list):
+                result = {s["key"]: s.get("value", "") for s in settings_data}
+                _settings_cache["data"] = result
+                _settings_cache["expires"] = now + _SETTINGS_CACHE_TTL
+                return result
+        except Exception:
+            pass
+        # Return stale cache if fetch failed
+        if _settings_cache["data"] is not None:
+            return _settings_cache["data"]  # type: ignore[return-value]
+        return {}
 
 
 async def _check_channel_join(bot: Bot, user_id: int, settings: dict[str, str]) -> bool | None:

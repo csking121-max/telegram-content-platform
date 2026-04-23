@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,22 @@ from backend.schemas.user import UserCreate, UserRead, UserUpdate
 from backend.services.user_service import UserService
 from backend.engines.credit_engine import CreditEngine
 from backend.engines.membership_engine import MembershipEngine
+
+
+# ── Request schemas ──────────────────────────────────────
+class GrantCreditsBody(BaseModel):
+    amount: int = Field(..., description="Positive to add, negative to deduct")
+    reason: str = Field("admin action", max_length=200)
+
+
+class GrantMembershipBody(BaseModel):
+    membership_type: str = Field("vip", max_length=50)
+    days: int = Field(30, ge=0, le=3650)
+    hours: int = Field(0, ge=0, le=8760)
+
+
+class SetLevelBody(BaseModel):
+    level: int = Field(..., ge=0, le=100)
 
 router = APIRouter()
 
@@ -76,10 +93,10 @@ async def get_user_detail(user_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{user_id}/grant-credits")
-async def grant_credits(user_id: int, body: dict, db: AsyncSession = Depends(get_db)):
-    """Grant or deduct credits for a user. Body: {amount: int, reason: str}."""
-    amount = body.get("amount", 0)
-    reason = body.get("reason", "admin action")
+async def grant_credits(user_id: int, body: GrantCreditsBody, db: AsyncSession = Depends(get_db)):
+    """Grant or deduct credits for a user."""
+    amount = body.amount
+    reason = body.reason
     if not amount:
         raise HTTPException(400, "Amount is required")
 
@@ -96,11 +113,11 @@ async def grant_credits(user_id: int, body: dict, db: AsyncSession = Depends(get
 
 
 @router.post("/{user_id}/grant-membership")
-async def grant_membership_for_user(user_id: int, body: dict, db: AsyncSession = Depends(get_db)):
-    """Grant membership. Body: {membership_type: str, days: int, hours: int}."""
-    mtype = body.get("membership_type", "vip")
-    days = body.get("days", 30)
-    hours = body.get("hours", 0)
+async def grant_membership_for_user(user_id: int, body: GrantMembershipBody, db: AsyncSession = Depends(get_db)):
+    """Grant membership."""
+    mtype = body.membership_type
+    days = body.days
+    hours = body.hours
     expiry = datetime.now(timezone.utc) + timedelta(days=days, hours=hours) if (days > 0 or hours > 0) else None
     engine = MembershipEngine(db)
     membership = await engine.grant(user_id=user_id, membership_type=mtype, expiry_at=expiry)
@@ -113,9 +130,9 @@ async def grant_membership_for_user(user_id: int, body: dict, db: AsyncSession =
 
 
 @router.post("/{user_id}/set-level")
-async def set_user_level(user_id: int, body: dict, db: AsyncSession = Depends(get_db)):
-    """Set user level. Body: {level: int}."""
-    level = body.get("level", 0)
+async def set_user_level(user_id: int, body: SetLevelBody, db: AsyncSession = Depends(get_db)):
+    """Set user level."""
+    level = body.level
     svc = UserService(db)
     user = await svc.get_by_id(user_id)
     if not user:

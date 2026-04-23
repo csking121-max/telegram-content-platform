@@ -24,4 +24,11 @@ COPY workers/ ./workers/
 
 ENV PYTHONPATH=/app
 
+# Run as non-root user
+RUN groupadd --system appuser && useradd --system --gid appuser appuser && chown -R appuser:appuser /app
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import os, signal; os.kill(1, 0)" || exit 1
+
 CMD ["python", "workers/main.py"]

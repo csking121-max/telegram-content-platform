@@ -83,6 +83,7 @@ class ExpiryNotifyWorker:
                 Membership.expiry_at <= cutoff,
                 Membership.expiry_notified_at.is_(None),
             )
+            .limit(500)
         )
         memberships = list(result.scalars().all())
         if not memberships:

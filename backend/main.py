@@ -4,6 +4,7 @@ Telegram Content Access Platform — FastAPI entry-point.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -34,10 +35,25 @@ def _setup_logging() -> None:
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
 
-    formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    # Use JSON format in production for structured log analysis
+    if settings.DEBUG:
+        formatter = logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    else:
+        class JSONFormatter(logging.Formatter):
+            def format(self, record):
+                log_obj = {
+                    "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "msg": record.getMessage(),
+                }
+                if record.exc_info and record.exc_info[1]:
+                    log_obj["exception"] = self.formatException(record.exc_info)
+                return json.dumps(log_obj, ensure_ascii=False)
+        formatter = JSONFormatter()
 
     # Console handler
     console = logging.StreamHandler(sys.stdout)

@@ -35,7 +35,7 @@ primary_region = "sin"         # Singapore — change to closest: iad=US, lhr=Lo
     timeout       = "10s"
     grace_period  = "15s"
     method        = "GET"
-    path          = "/health"
+    path          = "/"
 
 [[vm]]
   memory = "256mb"

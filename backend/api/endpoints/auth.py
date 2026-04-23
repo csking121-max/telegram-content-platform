@@ -106,11 +106,14 @@ async def admin_login(body: LoginRequest, request: Request, response: Response):
     try:
         if stored.startswith("$2b$") or stored.startswith("$2a$"):
             valid = verify_password(body.password, stored)
-        else:
-            # Plaintext fallback — constant-time comparison
+        elif settings.DEBUG:
+            # Plaintext fallback — only allowed in DEBUG mode, constant-time comparison
             valid = _secrets.compare_digest(body.password, stored)
             if valid:
                 logger.warning("ADMIN_PASSWORD is plaintext — set a bcrypt hash for production")
+        else:
+            logger.error("ADMIN_PASSWORD is not a bcrypt hash and DEBUG is off — rejecting login")
+            valid = False
     except Exception:
         logger.warning("Password verification failed — ADMIN_PASSWORD may not be a bcrypt hash")
         valid = False

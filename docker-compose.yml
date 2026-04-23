@@ -50,6 +50,9 @@ services:
       TELEGRAM_LOCAL_API_URL: http://telegram-bot-api:8081
     volumes:
       - ./backend:/app/backend
+      - ./backups:/app/backups
+      - ./scripts:/app/scripts
+      - ./data:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -97,6 +100,7 @@ services:
     volumes:
       - ./telegram_gateway:/app/telegram_gateway
       - ./backend:/app/backend
+      - ./data:/app/data
     depends_on:
       db:
         condition: service_healthy

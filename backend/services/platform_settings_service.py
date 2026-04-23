@@ -2,7 +2,8 @@
 Platform Settings Service — reads/writes configurable settings from the DB.
 
 Default settings are seeded on first access. Admin can override via the admin panel.
-Includes an in-memory TTL cache to avoid hitting the DB on every get().
+Includes a Redis-backed cache (with in-memory fallback) to avoid hitting the DB on
+every get(). Redis cache is shared across all backend workers/processes.
 """
 from __future__ import annotations
 
@@ -17,13 +18,35 @@ from backend.models.platform_setting import PlatformSetting
 
 logger = logging.getLogger(__name__)
 
-# ── In-memory cache with TTL ────────────────────────────────
+# ── Cache with TTL (Redis-backed, in-memory fallback) ───────
 _CACHE_TTL = 60  # seconds
+_REDIS_PREFIX = "psetting:"
+
+# In-memory fallback cache (used when Redis is unavailable)
 _cache: dict[str, tuple[str, float]] = {}  # key → (value, expires_at)
+
+
+def _get_redis():
+    """Return Redis client or None if unavailable."""
+    try:
+        from backend.redis_client import RedisClient
+        return RedisClient.get().client
+    except Exception:
+        return None
 
 
 def _cache_get(key: str) -> str | None:
     """Return cached value if present and not expired, else None."""
+    r = _get_redis()
+    if r:
+        try:
+            val = r.get(f"{_REDIS_PREFIX}{key}")
+            if val is not None:
+                return val
+            return None
+        except Exception:
+            pass
+    # In-memory fallback
     entry = _cache.get(key)
     if entry is None:
         return None
@@ -35,15 +58,37 @@ def _cache_get(key: str) -> str | None:
 
 
 def _cache_set(key: str, value: str) -> None:
+    r = _get_redis()
+    if r:
+        try:
+            r.setex(f"{_REDIS_PREFIX}{key}", _CACHE_TTL, value)
+            return
+        except Exception:
+            pass
+    # In-memory fallback
     _cache[key] = (value, time.monotonic() + _CACHE_TTL)
 
 
 def _cache_invalidate(key: str) -> None:
+    r = _get_redis()
+    if r:
+        try:
+            r.delete(f"{_REDIS_PREFIX}{key}")
+        except Exception:
+            pass
     _cache.pop(key, None)
 
 
 def invalidate_settings_cache() -> None:
     """Clear entire settings cache (e.g. after bulk update)."""
+    r = _get_redis()
+    if r:
+        try:
+            keys = r.keys(f"{_REDIS_PREFIX}*")
+            if keys:
+                r.delete(*keys)
+        except Exception:
+            pass
     _cache.clear()
 
 # ── Default settings (seeded if not in DB) ──────────────────
@@ -98,6 +143,10 @@ DEFAULTS: list[dict] = [
     {"key": "credits_per_inr", "value": "1", "description": "Price per 1 credit in ₹ (e.g. 0.20 = ₹0.20/credit, 1 = ₹1/credit, 5 = ₹5/credit)", "category": "credits"},
     {"key": "custom_credits_min", "value": "10", "description": "Minimum credits a user can buy in a custom order", "category": "credits"},
     {"key": "custom_credits_max", "value": "0", "description": "Maximum credits per custom order (0 = no limit)", "category": "credits"},
+
+    # Cooldown System
+    {"key": "cooldown_links_limit", "value": "5", "description": "Number of deep links a user can access (across all bots) before cooldown is applied", "category": "cooldown"},
+    {"key": "cooldown_seconds", "value": "3600", "description": "Duration of cooldown in seconds (e.g. 3600 = 1 hour) after exceeding link limit", "category": "cooldown"},
 ]
 
 

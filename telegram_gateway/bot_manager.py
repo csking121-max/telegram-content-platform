@@ -32,6 +32,7 @@ import sys
 
 import httpx
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand
 from dotenv import load_dotenv
 
 from .handlers.start import start_router
@@ -45,6 +46,18 @@ from .http_client import BACKEND_URL
 
 # Maps bot_id (int) → {username, hmac_secret}.  Populated by run_bots().
 _BOT_CONFIGS: dict[int, dict[str, str]] = {}
+
+# Available commands for the command menu (shows when user types /)
+_BOT_COMMANDS = [
+    BotCommand(command="start", description="Main menu"),
+    BotCommand(command="plans", description="View membership plans"),
+    BotCommand(command="buy", description="Purchase membership"),
+    BotCommand(command="pay", description="Submit payment reference (UTR)"),
+    BotCommand(command="mystatus", description="Check payment status"),
+    BotCommand(command="profile", description="View your profile"),
+    BotCommand(command="menu", description="Show main menu"),
+    BotCommand(command="help", description="Help & available commands"),
+]
 
 
 class TrackingBot(Bot):
@@ -222,6 +235,19 @@ async def _config_watcher(
 
 
 # ---------------------------------------------------------------------------
+# Register bot commands
+# ---------------------------------------------------------------------------
+
+async def _register_bot_commands(bot: Bot, username: str) -> None:
+    """Register available commands for the bot (shows in / menu)."""
+    try:
+        await bot.set_my_commands(_BOT_COMMANDS)
+        logger.info("Registered %d command(s) for @%s", len(_BOT_COMMANDS), username)
+    except Exception as exc:
+        logger.warning("Failed to register commands for @%s: %s", username, exc)
+
+
+# ---------------------------------------------------------------------------
 # Main bot runner
 # ---------------------------------------------------------------------------
 
@@ -289,6 +315,12 @@ async def run_bots() -> bool:
 
     # Start background message-tracking flush loop
     start_flush_task()
+
+    # Register bot commands (shows in / menu for users)
+    logger.info("Registering commands for all bots...")
+    for i, bot in enumerate(bots):
+        username = _BOT_CONFIGS.get(bot.id, {}).get("username", f"bot{i}")
+        await _register_bot_commands(bot, username)
 
     check_interval = int(os.getenv("BOT_CONFIG_CHECK_INTERVAL", "60"))
     current_tokens = frozenset(cfg.get("token", "") for cfg in bots_config if cfg.get("token"))
