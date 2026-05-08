@@ -8,6 +8,7 @@ Flow:
 """
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,8 @@ from backend.security.hmac_validation import validate_hmac
 from backend.services.user_service import UserService
 from backend.services.bot_service import BotService
 from backend.services.activity_logger import ActivityLogger
+from backend.services.cooldown_service import CooldownService
+from backend.services.platform_settings_service import PlatformSettingsService
 from backend.engines.access_control import AccessControlEngine
 from backend.engines.delivery_engine import DeliveryEngine
 
@@ -87,11 +90,65 @@ async def receive_webhook(
         return {"ok": True, "user_id": user.id}
 
     if action == "access_check":
+        cooldown_svc = CooldownService(db)
+        active_cooldown = await cooldown_svc.get_cooldown_for_user(user.id)
+        if active_cooldown:
+            remaining = int(
+                (active_cooldown.cooldown_until - datetime.now(timezone.utc)).total_seconds()
+            )
+            reason = f"User is in cooldown. Remaining time: {max(remaining, 0)} seconds"
+            await activity.log(
+                user_id=user.id,
+                action="access_check",
+                payload={
+                    "token": payload.token,
+                    "allowed": False,
+                    "reason": "cooldown_active",
+                    "remaining_seconds": max(remaining, 0),
+                },
+            )
+            await db.commit()
+            return {"allowed": False, "reason": reason}
+
         engine = AccessControlEngine(db)
         result = await engine.check(
             telegram_id=payload.telegram_id,
             token_str=payload.token or "",
         )
+
+        if result.allowed:
+            settings_svc = PlatformSettingsService(db)
+            cooldown_links_limit = await settings_svc.get_int("cooldown_links_limit", 5)
+            cooldown_seconds = await settings_svc.get_int("cooldown_seconds", 3600)
+            access_count, should_cooldown = await cooldown_svc.increment_access_count(
+                user.id,
+                cooldown_links_limit,
+                cooldown_seconds,
+            )
+            if should_cooldown:
+                await cooldown_svc.apply_cooldown(
+                    user_id=user.id,
+                    cooldown_seconds=cooldown_seconds,
+                    access_count=access_count,
+                    cooldown_links_limit=cooldown_links_limit,
+                )
+                reason = (
+                    f"Link access limit ({cooldown_links_limit}) exceeded. "
+                    f"Cooldown applied for {cooldown_seconds} seconds."
+                )
+                await activity.log(
+                    user_id=user.id,
+                    action="access_check",
+                    payload={
+                        "token": payload.token,
+                        "allowed": False,
+                        "reason": "cooldown_applied",
+                        "access_count": access_count,
+                    },
+                )
+                await db.commit()
+                return {"allowed": False, "reason": reason}
+
         await activity.log(
             user_id=user.id,
             action="access_check",

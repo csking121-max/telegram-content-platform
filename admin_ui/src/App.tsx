@@ -25,6 +25,7 @@ import ContentFactory from "./pages/ContentFactory";
 import ContentManager from "./pages/ContentManager";
 import Tutorials from "./pages/Tutorials";
 import Backups from "./pages/Backups";
+import Cooldowns from "./pages/Cooldowns";
 
 export default function App() {
   return (
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="/membership-plans" element={<MembershipPlans />} />
           <Route path="/upi-settings" element={<UpiSettings />} />
           <Route path="/payments" element={<PaymentManagement />} />
+          <Route path="/cooldowns" element={<Cooldowns />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/test" element={<TestPanel />} />
           <Route path="/logs" element={<Logs />} />

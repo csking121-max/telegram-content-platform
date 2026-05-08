@@ -1,12 +1,17 @@
 """Admin endpoints for cooldown management."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.dependencies import get_db
 from backend.services.cooldown_service import CooldownService
 
 router = APIRouter()
+
+
+class ExtendCooldownBody(BaseModel):
+    additional_seconds: int
 
 
 @router.get("")
@@ -31,10 +36,14 @@ async def remove_cooldown(cooldown_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/{cooldown_id}/extend")
 async def extend_cooldown(
     cooldown_id: int,
-    additional_seconds: int,
+    body: ExtendCooldownBody | None = None,
+    additional_seconds: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Extend an active cooldown by additional seconds."""
+    additional_seconds = body.additional_seconds if body is not None else additional_seconds
+    if additional_seconds is None:
+        raise HTTPException(400, "additional_seconds is required")
     if additional_seconds <= 0:
         raise HTTPException(400, "additional_seconds must be positive")
     
