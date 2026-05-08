@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFetch } from "../hooks/useFetch";
 import {
   getUsers,
@@ -37,38 +37,46 @@ const PAGE_SIZE = 50;
 
 export default function Users() {
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [membershipFilter, setMembershipFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("created_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(0);
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
+  const queryParams = useMemo(() => ({
+    search: debouncedSearch || undefined,
+    status: statusFilter,
+    membership: membershipFilter,
+    sort_by: sortBy,
+    sort_dir: sortDir,
+  }), [debouncedSearch, statusFilter, membershipFilter, sortBy, sortDir]);
+
   const { data: users, loading, error, refetch } = useFetch(
-    useCallback(() => getUsers(page * PAGE_SIZE, PAGE_SIZE), [page]),
+    useCallback(() => getUsers(page * PAGE_SIZE, PAGE_SIZE, queryParams), [page, queryParams]),
   );
 
   const [selected, setSelected] = useState<UserDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-
-  /* Credit form */
   const [creditAmt, setCreditAmt] = useState("");
   const [creditReason, setCreditReason] = useState("");
-
-  /* Membership form */
   const [memType, setMemType] = useState("vip");
   const [memDays, setMemDays] = useState("30");
-
-  /* Membership plans from DB */
   const [plans, setPlans] = useState<MembershipPlan[]>([]);
+  const [newLevel, setNewLevel] = useState("");
+  const [msg, setMsg] = useState("");
 
   useEffect(() => {
     getMembershipPlans(false).then(setPlans).catch(() => {});
   }, []);
-
-  /* Level form */
-  const [newLevel, setNewLevel] = useState("");
-
-  const [msg, setMsg] = useState("");
-
-  const toggle = async (id: number, blocked: boolean) => {
-    blocked ? await unblockUser(id) : await blockUser(id);
-    refetch();
-    if (selected?.id === id) loadDetail(id);
-  };
 
   const loadDetail = async (userId: number) => {
     setLoadingDetail(true);
@@ -84,6 +92,12 @@ export default function Users() {
     }
   };
 
+  const toggle = async (id: number, blocked: boolean) => {
+    blocked ? await unblockUser(id) : await blockUser(id);
+    refetch();
+    if (selected?.id === id) loadDetail(id);
+  };
+
   const handleGrantCredits = async () => {
     if (!selected || !creditAmt) return;
     try {
@@ -92,6 +106,7 @@ export default function Users() {
       setCreditAmt("");
       setCreditReason("");
       loadDetail(selected.id);
+      refetch();
     } catch {
       setMsg("Failed to adjust credits");
     }
@@ -103,6 +118,7 @@ export default function Users() {
       const res = await grantUserMembership(selected.id, memType, Number(memDays));
       setMsg(`Granted ${memType} membership until ${res.expiry_at || "forever"}`);
       loadDetail(selected.id);
+      refetch();
     } catch {
       setMsg("Failed to grant membership");
     }
@@ -113,6 +129,7 @@ export default function Users() {
       await revokeMembership(memId);
       setMsg("Membership revoked");
       if (selected) loadDetail(selected.id);
+      refetch();
     } catch {
       setMsg("Failed to revoke membership");
     }
@@ -124,19 +141,72 @@ export default function Users() {
       await setUserLevel(selected.id, Number(newLevel));
       setMsg(`Level set to ${newLevel}`);
       loadDetail(selected.id);
+      refetch();
     } catch {
       setMsg("Failed to set level");
     }
   };
 
-  if (loading) return <p>Loading…</p>;
+  const resetFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setMembershipFilter("all");
+    setSortBy("created_at");
+    setSortDir("desc");
+    setPage(0);
+  };
+
+  const membershipLabel = (membership?: string | null, count = 0) => {
+    if (!membership || count === 0) return "None";
+    return count > 1 ? `${membership.toUpperCase()} +${count - 1}` : membership.toUpperCase();
+  };
+
+  if (loading) return <p>Loading...</p>;
   if (error) return <p style={{ color: "red" }}>{error}</p>;
 
   return (
     <div style={{ display: "flex", gap: 24 }}>
-      {/* ── Left: User list ──────────────────────────────── */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <h1>Users</h1>
+
+        <div style={toolbarStyle}>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search ID, Telegram ID, username"
+            style={{ ...inputStyle, flex: "1 1 260px" }}
+          />
+          <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }} style={inputStyle}>
+            <option value="all">All statuses</option>
+            <option value="active">Active only</option>
+            <option value="blocked">Blocked only</option>
+          </select>
+          <select value={membershipFilter} onChange={(e) => { setMembershipFilter(e.target.value); setPage(0); }} style={inputStyle}>
+            <option value="all">All memberships</option>
+            <option value="active">Any active membership</option>
+            <option value="none">No active membership</option>
+            {plans.map((p) => (
+              <option key={p.id} value={p.access_type}>{p.display_name || p.name}</option>
+            ))}
+          </select>
+          <select value={sortBy} onChange={(e) => { setSortBy(e.target.value); setPage(0); }} style={inputStyle}>
+            <option value="created_at">Sort by created</option>
+            <option value="last_active_at">Sort by last active</option>
+            <option value="id">Sort by ID</option>
+            <option value="telegram_id">Sort by Telegram ID</option>
+            <option value="username">Sort by username</option>
+            <option value="level">Sort by level</option>
+            <option value="credit_balance">Sort by credits</option>
+            <option value="membership">Sort by membership</option>
+            <option value="status">Sort by status</option>
+          </select>
+          <select value={sortDir} onChange={(e) => { setSortDir(e.target.value as "asc" | "desc"); setPage(0); }} style={inputStyle}>
+            <option value="desc">Desc</option>
+            <option value="asc">Asc</option>
+          </select>
+          <button onClick={resetFilters} style={btnSecondary}>Reset</button>
+        </div>
+
         <table style={tableStyle}>
           <thead>
             <tr>
@@ -144,6 +214,8 @@ export default function Users() {
               <th>Telegram ID</th>
               <th>Username</th>
               <th>Level</th>
+              <th>Credits</th>
+              <th>Membership</th>
               <th>Status</th>
               <th>Created</th>
               <th>Actions</th>
@@ -162,9 +234,11 @@ export default function Users() {
               >
                 <td>{u.id}</td>
                 <td>{u.telegram_id}</td>
-                <td>{u.username ?? "—"}</td>
+                <td>{u.username ? `@${u.username}` : "-"}</td>
                 <td>{u.level}</td>
-                <td>{u.blocked_until ? "🔴 Blocked" : "🟢 Active"}</td>
+                <td style={{ fontWeight: 700 }}>{u.credit_balance ?? 0}</td>
+                <td>{membershipLabel(u.active_membership, u.active_membership_count)}</td>
+                <td>{u.blocked_until ? "Blocked" : "Active"}</td>
                 <td>{new Date(u.created_at).toLocaleDateString()}</td>
                 <td>
                   <button
@@ -182,11 +256,15 @@ export default function Users() {
                 </td>
               </tr>
             ))}
+            {users?.length === 0 && (
+              <tr><td colSpan={9} style={{ padding: 16, color: "#777" }}>No users match these filters.</td></tr>
+            )}
           </tbody>
         </table>
+
         <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
           <button disabled={page === 0} onClick={() => setPage((p) => p - 1)} style={btnPrimary}>
-            ← Prev
+            Prev
           </button>
           <span style={{ fontSize: 13 }}>Page {page + 1}</span>
           <button
@@ -194,41 +272,38 @@ export default function Users() {
             onClick={() => setPage((p) => p + 1)}
             style={btnPrimary}
           >
-            Next →
+            Next
           </button>
         </div>
       </div>
 
-      {/* ── Right: Detail panel ──────────────────────────── */}
       {selected && (
         <div style={panelStyle}>
           {loadingDetail ? (
-            <p>Loading…</p>
+            <p>Loading...</p>
           ) : (
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h2 style={{ margin: 0 }}>User #{selected.id}</h2>
-                <button onClick={() => setSelected(null)} style={closeBtnStyle}>✕</button>
+                <button onClick={() => setSelected(null)} style={closeBtnStyle}>x</button>
               </div>
 
               {msg && <p style={{ color: "#1976d2", fontSize: 13, margin: "8px 0" }}>{msg}</p>}
 
-              {/* Profile */}
               <div style={sectionStyle}>
                 <p><strong>Telegram ID:</strong> {selected.telegram_id}</p>
-                <p><strong>Username:</strong> @{selected.username || "—"}</p>
+                <p><strong>Username:</strong> @{selected.username || "-"}</p>
                 <p><strong>Level:</strong> {selected.level}</p>
                 <p><strong>Credits:</strong>{" "}
                   <span style={{ fontSize: 18, fontWeight: "bold", color: "#4caf50" }}>
                     {selected.credit_balance}
                   </span>
                 </p>
-                <p><strong>Status:</strong> {selected.blocked_until ? "🔴 Blocked" : "🟢 Active"}</p>
-                <p><strong>Created:</strong> {selected.created_at ? new Date(selected.created_at).toLocaleString() : "—"}</p>
-                <p><strong>Last Active:</strong> {selected.last_active_at ? new Date(selected.last_active_at).toLocaleString() : "—"}</p>
+                <p><strong>Status:</strong> {selected.blocked_until ? "Blocked" : "Active"}</p>
+                <p><strong>Created:</strong> {selected.created_at ? new Date(selected.created_at).toLocaleString() : "-"}</p>
+                <p><strong>Last Active:</strong> {selected.last_active_at ? new Date(selected.last_active_at).toLocaleString() : "-"}</p>
               </div>
 
-              {/* Set Level */}
               <div style={sectionStyle}>
                 <h4 style={sectionHeader}>Set Level</h4>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -237,7 +312,6 @@ export default function Users() {
                 </div>
               </div>
 
-              {/* Credits */}
               <div style={sectionStyle}>
                 <h4 style={sectionHeader}>Credits</h4>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -261,7 +335,6 @@ export default function Users() {
                 </p>
               </div>
 
-              {/* Grant Membership */}
               <div style={sectionStyle}>
                 <h4 style={sectionHeader}>Grant Membership</h4>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -291,7 +364,6 @@ export default function Users() {
                 </div>
               </div>
 
-              {/* Active Memberships */}
               <div style={sectionStyle}>
                 <h4 style={sectionHeader}>Memberships</h4>
                 {selected.memberships.length === 0 ? (
@@ -299,14 +371,14 @@ export default function Users() {
                 ) : (
                   <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
                     <thead>
-                      <tr><th style={{textAlign:"left"}}>Type</th><th>Status</th><th>Expires</th><th></th></tr>
+                      <tr><th style={{ textAlign: "left" }}>Type</th><th>Status</th><th>Expires</th><th></th></tr>
                     </thead>
                     <tbody>
                       {selected.memberships.map((m) => (
                         <tr key={m.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
                           <td style={{ fontWeight: "bold", textTransform: "uppercase" }}>{m.membership_type}</td>
-                          <td>{m.is_active ? "🟢 Active" : "⚪ Expired"}</td>
-                          <td>{m.expiry_at ? new Date(m.expiry_at).toLocaleDateString() : "∞"}</td>
+                          <td>{m.is_active ? "Active" : "Expired"}</td>
+                          <td>{m.expiry_at ? new Date(m.expiry_at).toLocaleDateString() : "Forever"}</td>
                           <td>
                             {m.is_active && (
                               <button
@@ -324,7 +396,6 @@ export default function Users() {
                 )}
               </div>
 
-              {/* Block / Unblock */}
               <div style={sectionStyle}>
                 <button
                   onClick={() => toggle(selected.id, !!selected.blocked_until)}
@@ -334,7 +405,7 @@ export default function Users() {
                     color: "#fff", border: "none", borderRadius: 4, cursor: "pointer",
                   }}
                 >
-                  {selected.blocked_until ? "🔓 Unblock User" : "🔒 Block User"}
+                  {selected.blocked_until ? "Unblock User" : "Block User"}
                 </button>
               </div>
             </>
@@ -345,7 +416,13 @@ export default function Users() {
   );
 }
 
-/* ── Styles ──────────────────────────────────────────────── */
+const toolbarStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+  alignItems: "center",
+  marginBottom: 12,
+};
 
 const tableStyle: React.CSSProperties = {
   width: "100%",
@@ -378,4 +455,9 @@ const inputStyle: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = {
   padding: "6px 14px", background: "#1976d2", color: "#fff",
   border: "none", borderRadius: 4, cursor: "pointer", fontSize: 13,
+};
+
+const btnSecondary: React.CSSProperties = {
+  padding: "6px 14px", background: "#eee", color: "#222",
+  border: "1px solid #ccc", borderRadius: 4, cursor: "pointer", fontSize: 13,
 };

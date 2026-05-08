@@ -96,7 +96,8 @@ async def receive_webhook(
             remaining = int(
                 (active_cooldown.cooldown_until - datetime.now(timezone.utc)).total_seconds()
             )
-            reason = f"User is in cooldown. Remaining time: {max(remaining, 0)} seconds"
+            remaining_seconds = max(remaining, 0)
+            reason = f"User is in cooldown. Remaining time: {remaining_seconds} seconds"
             await activity.log(
                 user_id=user.id,
                 action="access_check",
@@ -104,11 +105,16 @@ async def receive_webhook(
                     "token": payload.token,
                     "allowed": False,
                     "reason": "cooldown_active",
-                    "remaining_seconds": max(remaining, 0),
+                    "remaining_seconds": remaining_seconds,
                 },
             )
             await db.commit()
-            return {"allowed": False, "reason": reason}
+            return {
+                "allowed": False,
+                "reason": reason,
+                "reason_code": "cooldown_active",
+                "remaining_seconds": remaining_seconds,
+            }
 
         engine = AccessControlEngine(db)
         result = await engine.check(
@@ -147,7 +153,13 @@ async def receive_webhook(
                     },
                 )
                 await db.commit()
-                return {"allowed": False, "reason": reason}
+                return {
+                    "allowed": False,
+                    "reason": reason,
+                    "reason_code": "cooldown_applied",
+                    "cooldown_seconds": cooldown_seconds,
+                    "remaining_seconds": cooldown_seconds,
+                }
 
         await activity.log(
             user_id=user.id,

@@ -52,8 +52,18 @@ export const getSummary = () =>
 
 /* ── Users ─────────────────────────────────────────────────── */
 
-export const getUsers = (skip = 0, limit = 50) =>
-  apiClient.get<User[]>("/admin/users", { params: { skip, limit } }).then((r) => r.data);
+export const getUsers = (
+  skip = 0,
+  limit = 50,
+  params: {
+    search?: string;
+    status?: string;
+    membership?: string;
+    sort_by?: string;
+    sort_dir?: string;
+  } = {},
+) =>
+  apiClient.get<User[]>("/admin/users", { params: { skip, limit, ...params } }).then((r) => r.data);
 
 export const getUser = (id: number) =>
   apiClient.get<User>(`/admin/users/${id}`).then((r) => r.data);
@@ -700,4 +710,3 @@ export const triggerBackup = () =>
 
 export const downloadBackup = (filename: string) =>
   apiClient.get(`/admin/backups/${filename}/download`, { responseType: "blob" }).then((r) => r.data);
-

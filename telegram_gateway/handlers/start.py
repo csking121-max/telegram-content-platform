@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 
 import base64
@@ -241,6 +242,29 @@ def _build_access_denied_menu(reason: str = "", upgrade_opts: list[str] | None =
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _format_cooldown_minutes(seconds: int | float | None) -> int:
+    try:
+        total = int(seconds or 0)
+    except (TypeError, ValueError):
+        total = 0
+    return max(1, math.ceil(max(total, 0) / 60))
+
+
+def _build_cooldown_notice(result: dict) -> str:
+    minutes = _format_cooldown_minutes(
+        result.get("cooldown_seconds") or result.get("remaining_seconds")
+    )
+    if result.get("reason_code") == "cooldown_applied":
+        headline = f"Cooldown applied for {minutes} Minutes"
+    else:
+        headline = f"Cooldown active for {minutes} Minutes"
+    return (
+        f"{headline}\n\n"
+        "This is to avoid Telegram spam detection. "
+        f"You can access links after {minutes} minutes."
+    )
+
+
 # -- /start ------------------------------------------------
 
 @start_router.message(CommandStart())
@@ -380,6 +404,8 @@ async def handle_start(message: Message, bot_username: str = "", hmac_secret: st
                         delete_after,
                     )
                 )
+        elif result.get("reason_code") in {"cooldown_active", "cooldown_applied"}:
+            await _tracked_answer(message, _build_cooldown_notice(result))
         elif upgrade_opts:
             opt_name = upgrade_opts[0].upper() if upgrade_opts else ""
             text = (
@@ -630,6 +656,11 @@ async def handle_check_join(callback: CallbackQuery) -> None:
             else:
                 reason = result.get("reason", "") if result else ""
                 upgrade_opts = result.get("upgrade_options") or [] if result else []
+                if result and result.get("reason_code") in {"cooldown_active", "cooldown_applied"}:
+                    await callback.message.answer(  # type: ignore
+                        _build_cooldown_notice(result),
+                    )
+                    return
                 if upgrade_opts:
                     kb = _build_access_denied_menu(upgrade_opts=upgrade_opts)
                 else:

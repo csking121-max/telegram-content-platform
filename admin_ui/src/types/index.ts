@@ -8,6 +8,9 @@ export interface User {
   created_at: string;
   last_active_at: string | null;
   blocked_until: string | null;
+  credit_balance?: number;
+  active_membership?: string | null;
+  active_membership_count?: number;
 }
 
 export interface Bot {
@@ -221,6 +224,7 @@ export interface UploadedVideo {
   bot_id: number;
   blur: string;
   thumbnail_file_id?: string;
+  thumbnail_options?: ThumbnailOption[];
   thumbTimestamp?: number;   // timestamp used for extracted frame (for re-extract on blur change)
   uploading: boolean;
   uploaded: boolean;  // true once upload to TG succeeded
@@ -229,6 +233,13 @@ export interface UploadedVideo {
   uploadedBytes?: number;
   totalBytes?: number;
   uploadStartTime?: number;   // Date.now() when upload began
+}
+
+export interface ThumbnailOption {
+  file_id: string;
+  label: string;
+  source?: string;
+  timestamp?: number;
 }
 
 export interface ContentCategory {

@@ -1,9 +1,10 @@
 """Admin CRUD for users."""
 
 from datetime import datetime, timezone, timedelta
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.dependencies import get_db
@@ -31,17 +32,120 @@ class GrantMembershipBody(BaseModel):
 class SetLevelBody(BaseModel):
     level: int = Field(..., ge=0, le=100)
 
+
+class UserListRead(UserRead):
+    credit_balance: int = 0
+    active_membership: str | None = None
+    active_membership_count: int = 0
+
 router = APIRouter()
 
 
-@router.get("", response_model=list[UserRead])
+@router.get("", response_model=list[UserListRead])
 async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
+    search: str | None = Query(None, max_length=255),
+    status: Literal["all", "active", "blocked"] = Query("all"),
+    membership: str = Query("all", max_length=64),
+    sort_by: Literal[
+        "id",
+        "telegram_id",
+        "username",
+        "level",
+        "status",
+        "created_at",
+        "last_active_at",
+        "credit_balance",
+        "membership",
+    ] = Query("created_at"),
+    sort_dir: Literal["asc", "desc"] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ):
-    svc = UserService(db)
-    return await svc.list_all(limit=limit, offset=skip)
+    now = datetime.now(timezone.utc)
+    active_membership_filter = or_(Membership.expiry_at.is_(None), Membership.expiry_at > now)
+    active_memberships = (
+        select(
+            Membership.user_id.label("user_id"),
+            func.count(Membership.id).label("active_membership_count"),
+            func.min(Membership.membership_type).label("active_membership"),
+        )
+        .where(active_membership_filter)
+        .group_by(Membership.user_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            User,
+            func.coalesce(Credit.balance, 0).label("credit_balance"),
+            func.coalesce(active_memberships.c.active_membership_count, 0).label("active_membership_count"),
+            active_memberships.c.active_membership.label("active_membership"),
+        )
+        .outerjoin(Credit, Credit.user_id == User.id)
+        .outerjoin(active_memberships, active_memberships.c.user_id == User.id)
+    )
+
+    if search:
+        stripped = search.strip()
+        term = f"%{stripped.lower()}%"
+        conditions = [func.lower(func.coalesce(User.username, "")).like(term)]
+        if stripped.isdigit():
+            numeric = int(stripped)
+            conditions.extend([User.id == numeric, User.telegram_id == numeric])
+        stmt = stmt.where(or_(*conditions))
+
+    if status == "blocked":
+        stmt = stmt.where(User.blocked_until.is_not(None), User.blocked_until > now)
+    elif status == "active":
+        stmt = stmt.where(or_(User.blocked_until.is_(None), User.blocked_until <= now))
+
+    membership_key = membership.strip().lower()
+    if membership_key == "active":
+        stmt = stmt.where(func.coalesce(active_memberships.c.active_membership_count, 0) > 0)
+    elif membership_key == "none":
+        stmt = stmt.where(func.coalesce(active_memberships.c.active_membership_count, 0) == 0)
+    elif membership_key not in {"", "all"}:
+        stmt = stmt.where(
+            User.id.in_(
+                select(Membership.user_id).where(
+                    func.lower(Membership.membership_type) == membership_key,
+                    active_membership_filter,
+                )
+            )
+        )
+
+    sort_columns = {
+        "id": User.id,
+        "telegram_id": User.telegram_id,
+        "username": func.lower(func.coalesce(User.username, "")),
+        "level": User.level,
+        "status": User.blocked_until,
+        "created_at": User.created_at,
+        "last_active_at": User.last_active_at,
+        "credit_balance": func.coalesce(Credit.balance, 0),
+        "membership": func.coalesce(active_memberships.c.active_membership, ""),
+    }
+    order_col = sort_columns[sort_by]
+    stmt = stmt.order_by(order_col.asc() if sort_dir == "asc" else order_col.desc(), User.id.desc())
+    stmt = stmt.limit(limit).offset(skip)
+
+    result = await db.execute(stmt)
+    return [
+        UserListRead(
+            id=user.id,
+            telegram_id=user.telegram_id,
+            username=user.username,
+            level=user.level,
+            created_at=user.created_at,
+            last_active_at=user.last_active_at,
+            blocked_until=user.blocked_until,
+            credit_balance=int(balance or 0),
+            active_membership=active_membership,
+            active_membership_count=int(active_count or 0),
+        )
+        for user, balance, active_count, active_membership in result.all()
+    ]
 
 
 @router.get("/count")

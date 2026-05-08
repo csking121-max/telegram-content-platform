@@ -19,6 +19,7 @@ import type {
   ContentCategory,
   DefaultThumbnail,
   PublishJob,
+  ThumbnailOption,
   UploadedVideo,
 } from "../types";
 
@@ -193,6 +194,8 @@ export default function ContentFactory() {
   const [groupCreditPerItem, setGroupCreditPerItem] = useState(defaults.groupCreditPerItem ?? 1);
   const [groupBotId, setGroupBotId] = useState(0);
   const [groupThumbId, setGroupThumbId] = useState("");
+  const [groupThumbOptions, setGroupThumbOptions] = useState<ThumbnailOption[]>([]);
+  const [groupThumbSourceId, setGroupThumbSourceId] = useState("");
   const [autoThumb, setAutoThumb] = useState(true);
 
   // Persist uploads to sessionStorage so tab switches don't lose them
@@ -344,6 +347,13 @@ export default function ContentFactory() {
                 storage_message_id: result.storage_message_id,
                 file_id: result.file_id,
                 thumbnail_file_id: x.thumbnail_file_id || result.thumbnail_file_id,
+                thumbnail_options: result.thumbnail_file_id
+                  ? addThumbOption(x.thumbnail_options, {
+                      file_id: result.thumbnail_file_id,
+                      label: "Auto thumbnail",
+                      source: "auto",
+                    })
+                  : x.thumbnail_options,
                 duration: result.duration,
                 width: result.width,
                 height: result.height,
@@ -427,6 +437,38 @@ export default function ContentFactory() {
     setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
   };
 
+  const addThumbOption = (options: ThumbnailOption[] | undefined, option: ThumbnailOption) => {
+    const existing = options || [];
+    if (existing.some((o) => o.file_id === option.file_id)) return existing;
+    return [...existing, option];
+  };
+
+  const addVideoThumbOption = (videoId: string, option: ThumbnailOption) => {
+    setVideos((prev) =>
+      prev.map((v) =>
+        v.id === videoId
+          ? {
+              ...v,
+              thumbnail_file_id: option.file_id,
+              thumbnail_options: addThumbOption(v.thumbnail_options, option),
+            }
+          : v,
+      ),
+    );
+  };
+
+  const addGroupThumbOption = (option: ThumbnailOption) => {
+    setGroupThumbOptions((prev) => addThumbOption(prev, option));
+    setGroupThumbId(option.file_id);
+  };
+
+  const formatTimestamp = (seconds: number) => {
+    const s = Math.max(0, Math.floor(seconds));
+    const m = Math.floor(s / 60);
+    const r = String(s % 60).padStart(2, "0");
+    return `${m}:${r}`;
+  };
+
   // Re-extract thumbnail when blur changes and a frame was previously picked
   const handleBlurChange = async (v: UploadedVideo, newBlur: string) => {
     updateVideo(v.id, { blur: newBlur });
@@ -434,7 +476,12 @@ export default function ContentFactory() {
       try {
         const result = await extractFrame(v.file, v.thumbTimestamp, newBlur);
         if (result.file_id) {
-          updateVideo(v.id, { thumbnail_file_id: result.file_id });
+          addVideoThumbOption(v.id, {
+            file_id: result.file_id,
+            label: `Frame ${formatTimestamp(v.thumbTimestamp)} (${newBlur})`,
+            source: "frame",
+            timestamp: v.thumbTimestamp,
+          });
         }
       } catch {
         // silently fail — old thumbnail remains
@@ -449,7 +496,11 @@ export default function ContentFactory() {
   const handleThumbUpload = async (videoId: string, file: File) => {
     try {
       const res = await uploadThumbnail(file);
-      updateVideo(videoId, { thumbnail_file_id: res.file_id });
+      addVideoThumbOption(videoId, {
+        file_id: res.file_id,
+        label: `Uploaded ${file.name}`,
+        source: "upload",
+      });
     } catch {
       alert("Thumbnail upload failed");
     }
@@ -458,7 +509,11 @@ export default function ContentFactory() {
   const handleGroupThumb = async (file: File) => {
     try {
       const res = await uploadThumbnail(file);
-      setGroupThumbId(res.file_id);
+      addGroupThumbOption({
+        file_id: res.file_id,
+        label: `Uploaded ${file.name}`,
+        source: "upload",
+      });
     } catch {
       alert("Thumbnail upload failed");
     }
@@ -516,6 +571,17 @@ export default function ContentFactory() {
   const stagedVideos = videos.filter((v) => !v.uploaded && !v.uploading && !v.error && v.file);
   const uploadingVideos = videos.filter((v) => v.uploading);
   const failedVideos = videos.filter((v) => v.error && v.file && !v.uploaded);
+  const groupVideoSources = videos.filter((v) => v.media_type === "video" && v.file);
+  const selectedGroupSource = groupVideoSources.find((v) => v.id === groupThumbSourceId) || groupVideoSources[0];
+  const groupAvailableThumbOptions = [
+    ...groupThumbOptions,
+    ...videos.flatMap((v) =>
+      (v.thumbnail_options || []).map((opt) => ({
+        ...opt,
+        label: `${v.title || v.filename}: ${opt.label}`,
+      })),
+    ),
+  ];
 
   const handlePublish = async () => {
     if (readyVideos.length === 0) return;
@@ -590,6 +656,7 @@ export default function ContentFactory() {
     value,
     onChange,
     onUpload,
+    options,
     videoFile,
     blur,
     onFramePicked,
@@ -597,6 +664,7 @@ export default function ContentFactory() {
     value: string;
     onChange: (fileId: string) => void;
     onUpload: (file: File) => void;
+    options?: ThumbnailOption[];
     videoFile?: File | null;
     blur?: string;
     onFramePicked?: (fileId: string, timestamp: number) => void;
@@ -638,7 +706,7 @@ export default function ContentFactory() {
       <div style={{ display: "flex", gap: 4, alignItems: "center", flexDirection: "column" }}>
         <div style={{ display: "flex", gap: 4, alignItems: "center", width: "100%" }}>
           <select
-            value={value && defaultThumbs.some((t) => t.file_id === value) ? value : "_custom"}
+            value={value && [...defaultThumbs, ...(options || [])].some((t) => t.file_id === value) ? value : "_custom"}
             onChange={(e) => {
               if (e.target.value === "_custom") return;
               if (e.target.value === "_none") { onChange(""); return; }
@@ -650,6 +718,11 @@ export default function ContentFactory() {
             {defaultThumbs.map((t) => (
               <option key={t.id} value={t.file_id}>
                 🖼️ {t.name}
+              </option>
+            ))}
+            {(options || []).map((t, i) => (
+              <option key={`${t.file_id}-${i}`} value={t.file_id}>
+                {t.label}
               </option>
             ))}
             <option value="_custom">📁 Custom…</option>
@@ -1200,12 +1273,32 @@ export default function ContentFactory() {
                 ))}
               </select>
             </div>
-            <div style={{ flex: "0 0 180px" }}>
+            <div style={{ flex: "1 1 300px" }}>
               <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Thumbnail</label>
+              {groupVideoSources.length > 0 && (
+                <select
+                  value={selectedGroupSource?.id || ""}
+                  onChange={(e) => setGroupThumbSourceId(e.target.value)}
+                  style={{ ...select_, marginBottom: 6 }}
+                >
+                  {groupVideoSources.map((v) => (
+                    <option key={v.id} value={v.id}>Pick frame from: {v.filename}</option>
+                  ))}
+                </select>
+              )}
               <ThumbSelector
                 value={groupThumbId}
                 onChange={setGroupThumbId}
                 onUpload={(file) => handleGroupThumb(file)}
+                options={groupAvailableThumbOptions}
+                videoFile={selectedGroupSource?.file}
+                blur={selectedGroupSource?.blur}
+                onFramePicked={(fid, ts) => addGroupThumbOption({
+                  file_id: fid,
+                  label: `Frame ${formatTimestamp(ts)} from ${selectedGroupSource?.filename || "group file"}`,
+                  source: "frame",
+                  timestamp: ts,
+                })}
               />
             </div>
           </div>
@@ -1395,9 +1488,18 @@ export default function ContentFactory() {
                           value={v.thumbnail_file_id || ""}
                           onChange={(fid) => updateVideo(v.id, { thumbnail_file_id: fid || undefined, thumbTimestamp: undefined })}
                           onUpload={(file) => handleThumbUpload(v.id, file)}
+                          options={v.thumbnail_options}
                           videoFile={v.media_type === "video" ? v.file : undefined}
                           blur={v.blur}
-                          onFramePicked={(fid, ts) => updateVideo(v.id, { thumbnail_file_id: fid, thumbTimestamp: ts })}
+                          onFramePicked={(fid, ts) => {
+                            addVideoThumbOption(v.id, {
+                              file_id: fid,
+                              label: `Frame ${formatTimestamp(ts)}`,
+                              source: "frame",
+                              timestamp: ts,
+                            });
+                            updateVideo(v.id, { thumbTimestamp: ts });
+                          }}
                         />
                       </td>
                     </>
