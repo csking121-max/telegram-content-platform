@@ -19,5 +19,8 @@ def test_duration_parsing_rejects_zero_and_uses_positive_values():
 
 
 def test_format_duration_uses_minutes_and_hours():
-    assert _format_duration(125.5) == "2:05"
-    assert _format_duration(3725) == "1:02:05"
+    assert _format_duration(0) == "0min"
+    assert _format_duration(30) == "1min"
+    assert _format_duration(125.5) == "2min"
+    assert _format_duration(4800) == "1hr20min"
+    assert _format_duration(7200) == "2hr"

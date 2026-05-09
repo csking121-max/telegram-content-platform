@@ -1208,13 +1208,19 @@ def _merge_thumbnail_ids(primary: str | None, many: list[str] | None) -> list[st
 
 
 def _format_duration(seconds: float | None) -> str:
-    total = max(0, int(seconds or 0))
-    hours = total // 3600
-    minutes = (total % 3600) // 60
-    secs = total % 60
-    if hours:
-        return f"{hours}:{minutes:02d}:{secs:02d}"
-    return f"{minutes}:{secs:02d}"
+    total_seconds = max(0, int(seconds or 0))
+    if total_seconds <= 0:
+        return "0min"
+
+    total_minutes = max(1, int(round(total_seconds / 60)))
+    if total_minutes < 60:
+        return f"{total_minutes}min"
+
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    if minutes:
+        return f"{hours}hr{minutes}min"
+    return f"{hours}hr"
 
 
 def _format_category(access_type: str) -> str:

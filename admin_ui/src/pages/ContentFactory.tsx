@@ -551,6 +551,34 @@ export default function ContentFactory() {
     setGroupThumbId(option.file_id);
   };
 
+  const removeVideoThumbOption = (videoId: string, fileId: string) => {
+    setVideos((prev) =>
+      prev.map((v) => {
+        if (v.id !== videoId) return v;
+        const options = (v.thumbnail_options || []).filter((opt) => opt.file_id !== fileId);
+        return {
+          ...v,
+          thumbnail_file_id: v.thumbnail_file_id === fileId ? undefined : v.thumbnail_file_id,
+          thumbnail_options: options,
+          thumbTimestamp: v.thumbnail_file_id === fileId ? undefined : v.thumbTimestamp,
+        };
+      }),
+    );
+  };
+
+  const removeGroupThumbOption = (fileId: string) => {
+    setGroupThumbOptions((prev) => prev.filter((opt) => opt.file_id !== fileId));
+    setVideos((prev) =>
+      prev.map((v) => ({
+        ...v,
+        thumbnail_options: (v.thumbnail_options || []).filter((opt) => opt.file_id !== fileId),
+        thumbnail_file_id: v.thumbnail_file_id === fileId ? undefined : v.thumbnail_file_id,
+        thumbTimestamp: v.thumbnail_file_id === fileId ? undefined : v.thumbTimestamp,
+      })),
+    );
+    if (groupThumbId === fileId) setGroupThumbId("");
+  };
+
   const formatTimestamp = (seconds: number) => {
     const s = Math.max(0, Math.floor(seconds));
     const m = Math.floor(s / 60);
@@ -760,6 +788,7 @@ export default function ContentFactory() {
     videoFile,
     blur,
     onFramePicked,
+    onRemoveOption,
   }: {
     value: string;
     onChange: (fileId: string) => void;
@@ -768,11 +797,13 @@ export default function ContentFactory() {
     videoFile?: File | null;
     blur?: string;
     onFramePicked?: (fileId: string, timestamp: number) => void;
+    onRemoveOption?: (fileId: string) => void;
   }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [showPicker, setShowPicker] = useState(false);
     const [extracting, setExtracting] = useState(false);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const removableOptions = options || [];
 
     // Create object URL for the video file
     useEffect(() => {
@@ -868,6 +899,47 @@ export default function ContentFactory() {
             </button>
           )}
         </div>
+        {onRemoveOption && removableOptions.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, width: "100%" }}>
+            {removableOptions.map((t, i) => (
+              <span
+                key={`${t.file_id}-${i}`}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  maxWidth: 180,
+                  padding: "2px 6px",
+                  border: "1px solid #ddd",
+                  borderRadius: 4,
+                  background: "#f8f8f8",
+                  fontSize: 10,
+                }}
+                title={t.label}
+              >
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {t.label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveOption(t.file_id)}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "#c0392b",
+                    cursor: "pointer",
+                    padding: "0 2px",
+                    fontWeight: 700,
+                    lineHeight: 1,
+                  }}
+                  title="Remove thumbnail"
+                >
+                  &times;
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {showPicker && previewUrl && (
           <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 6, background: "#fafafa", width: "100%", marginTop: 4 }}>
             <video
@@ -1442,6 +1514,7 @@ export default function ContentFactory() {
                 options={groupAvailableThumbOptions}
                 videoFile={selectedGroupSource?.file}
                 blur={groupBlur}
+                onRemoveOption={removeGroupThumbOption}
                 onFramePicked={(fid, ts) => addGroupThumbOption({
                   file_id: fid,
                   label: `Frame ${formatTimestamp(ts)} from ${selectedGroupSource?.filename || "group file"}`,
@@ -1740,6 +1813,7 @@ export default function ContentFactory() {
                           options={v.thumbnail_options}
                           videoFile={v.media_type === "video" ? v.file : undefined}
                           blur={v.blur}
+                          onRemoveOption={(fid) => removeVideoThumbOption(v.id, fid)}
                           onFramePicked={(fid, ts) => {
                             addVideoThumbOption(v.id, {
                               file_id: fid,
