@@ -10,8 +10,10 @@ All paths: store → extract UTR → auto-match → auto-grant → notify user.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
+from urllib.parse import parse_qs
 
 import secrets as _secrets
 
@@ -35,6 +37,32 @@ from backend.api.endpoints.internal import verify_internal_key
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+TEXT_FIELDS = (
+    "text",
+    "body",
+    "message",
+    "smsBody",
+    "sms_body",
+    "smsMessage",
+    "sms_message",
+    "msg",
+    "content",
+    "message_body",
+)
+
+SENDER_FIELDS = (
+    "from",
+    "sender",
+    "sender_name",
+    "senderName",
+    "number",
+    "address",
+    "phone",
+    "sim",
+    "contact",
+    "contact_name",
+)
+
 
 def _verify_sms_key(
     x_internal_key: str = Header(default=""),
@@ -52,6 +80,93 @@ def _verify_sms_key(
 
 
 # ── shared helper: process SMS → auto-match → auto-grant ────────────
+
+def _stringify_payload_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _first_payload_value(body: dict, field_names: tuple[str, ...]) -> str:
+    normalized = {
+        str(key).lower().replace(" ", "_"): value
+        for key, value in body.items()
+    }
+    for field in field_names:
+        value = normalized.get(field.lower().replace(" ", "_"))
+        text = _stringify_payload_value(value)
+        if text:
+            return text
+    return ""
+
+
+def _parse_loose_sms_text(raw_text: str) -> dict:
+    """
+    Parse bodies sent by automation apps that are not valid JSON despite
+    declaring application/json, for example:
+
+        sender: BANK
+        message: Rs.299 credited UTR: 123456789012
+    """
+    raw_text = raw_text.strip()
+    if not raw_text:
+        return {}
+
+    parsed: dict[str, str] = {}
+    for line in raw_text.splitlines():
+        clean = line.strip()
+        if not clean:
+            continue
+        if ":" in clean:
+            key, value = clean.split(":", 1)
+            normalized_key = key.strip().lower().replace(" ", "_")
+            parsed[normalized_key] = value.strip()
+
+    if not _first_payload_value(parsed, TEXT_FIELDS):
+        parsed["text"] = raw_text
+
+    return parsed
+
+
+def _payload_from_loaded_json(loaded: object) -> dict:
+    if isinstance(loaded, dict):
+        return loaded
+    if isinstance(loaded, list):
+        return {"text": "\n".join(_stringify_payload_value(item) for item in loaded)}
+    return {"text": _stringify_payload_value(loaded)}
+
+
+async def _parse_sms_payload(request: Request) -> dict:
+    content_type = request.headers.get("content-type", "").lower()
+    raw = await request.body()
+    raw_text = raw.decode("utf-8", errors="replace").strip()
+
+    if "form" in content_type:
+        form = await request.form()
+        body = dict(form)
+    elif raw_text:
+        try:
+            body = _payload_from_loaded_json(json.loads(raw_text))
+        except json.JSONDecodeError:
+            query_values = parse_qs(raw_text, keep_blank_values=True)
+            body = (
+                {key: values[-1] for key, values in query_values.items()}
+                if query_values
+                else _parse_loose_sms_text(raw_text)
+            )
+            if not _first_payload_value(body, TEXT_FIELDS):
+                body = _parse_loose_sms_text(raw_text)
+    else:
+        body = {}
+
+    for key, value in request.query_params.multi_items():
+        if key != "key" and key not in body:
+            body[key] = value
+
+    return body
+
 
 async def _process_and_match(
     db: AsyncSession,
@@ -252,39 +367,12 @@ async def sms_webhook(
       http://<SERVER_IP>:8000/sms/webhook
     """
     # Parse body — support JSON, form data, and raw text
-    content_type = request.headers.get("content-type", "")
-    body: dict = {}
-
-    if "application/json" in content_type:
-        body = await request.json()
-    elif "form" in content_type:
-        form = await request.form()
-        body = dict(form)
-    else:
-        # Try JSON first, fall back to treating raw body as SMS text
-        raw = await request.body()
-        try:
-            import json
-            body = json.loads(raw)
-        except Exception:
-            body = {"text": raw.decode("utf-8", errors="replace")}
+    body = await _parse_sms_payload(request)
 
     logger.info("SMS webhook raw payload: %s", {k: str(v)[:100] for k, v in body.items()})
 
     # Extract text from any common field name
-    text = (
-        body.get("text")
-        or body.get("body")
-        or body.get("message")
-        or body.get("smsBody")
-        or body.get("msg")
-        or body.get("content")
-        or ""
-    )
-    if isinstance(text, str):
-        text = text.strip()
-    else:
-        text = str(text).strip()
+    text = _first_payload_value(body, TEXT_FIELDS)
 
     if not text:
         raise HTTPException(400, "No SMS text found in payload")
@@ -293,15 +381,7 @@ async def sms_webhook(
         raise HTTPException(400, "SMS body too long")
 
     # Extract sender from any common field name
-    sender = (
-        body.get("from")
-        or body.get("sender")
-        or body.get("number")
-        or body.get("address")
-        or body.get("phone")
-        or body.get("sim")
-        or "SMS_FORWARDER"
-    )
+    sender = _first_payload_value(body, SENDER_FIELDS) or "SMS_FORWARDER"
 
     logger.info("SMS webhook received: sender=%s text=%s", sender, text[:100])
 
