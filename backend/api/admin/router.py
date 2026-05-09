@@ -13,6 +13,7 @@ from . import (
     bug_reports,
     cooldowns,
     content_factory,
+    content_transfer,
     content_packs,
     credits,
     dlq,
@@ -56,6 +57,7 @@ router.include_router(streaks.router, prefix="/streaks", tags=["admin-streaks"])
 router.include_router(dlq.router, prefix="/dlq", tags=["admin-dlq"])
 router.include_router(notifications.router, prefix="/notifications", tags=["admin-notifications"])
 router.include_router(content_factory.router, prefix="/content-factory", tags=["admin-content-factory"])
+router.include_router(content_transfer.router, prefix="/content-transfer", tags=["admin-content-transfer"])
 router.include_router(bug_reports.router, prefix="/bug-reports", tags=["admin-bug-reports"])
 router.include_router(tutorials.router, prefix="/tutorials", tags=["admin-tutorials"])
 router.include_router(backups.router, prefix="/backups", tags=["admin-backups"])

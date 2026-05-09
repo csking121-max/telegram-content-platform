@@ -8,8 +8,10 @@ with persistent job tracking that survives tab switches.
 from __future__ import annotations
 
 import asyncio
+from io import BytesIO
 import json
 import logging
+import math
 import os
 import subprocess
 import tempfile
@@ -19,6 +21,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1221,6 +1224,91 @@ async def _send_channel_photo(
     return False
 
 
+async def _download_thumbnail_bytes(db: AsyncSession, thumbnail_file_id: str) -> bytes | None:
+    bot_svc = BotService(db)
+    all_bots = await bot_svc.list_active()
+    for src_bot in all_bots:
+        img_bytes = await _tg_download_file(src_bot.bot_token, thumbnail_file_id)
+        if img_bytes:
+            return img_bytes
+    return None
+
+
+def _build_thumbnail_collage(images: list[bytes]) -> bytes | None:
+    opened: list[Image.Image] = []
+    try:
+        for img_bytes in images:
+            opened.append(Image.open(BytesIO(img_bytes)).convert("RGB"))
+        if not opened:
+            return None
+
+        count = len(opened)
+        cols = 2 if count <= 4 else 3
+        rows = math.ceil(count / cols)
+        cell_w = 640 if cols == 2 else 426
+        cell_h = 360
+        canvas = Image.new("RGB", (cell_w * cols, cell_h * rows), "black")
+
+        for idx, image in enumerate(opened):
+            fitted = ImageOps.contain(image, (cell_w, cell_h))
+            x = (idx % cols) * cell_w + (cell_w - fitted.width) // 2
+            y = (idx // cols) * cell_h + (cell_h - fitted.height) // 2
+            canvas.paste(fitted, (x, y))
+
+        out = BytesIO()
+        canvas.save(out, format="JPEG", quality=88, optimize=True)
+        return out.getvalue()
+    except Exception:
+        logger.exception("Failed to build thumbnail collage")
+        return None
+    finally:
+        for image in opened:
+            try:
+                image.close()
+            except Exception:
+                pass
+
+
+async def _send_channel_thumbnail_post(
+    db: AsyncSession,
+    bot,
+    channel_id: str,
+    thumbnail_file_ids: list[str],
+    caption: str,
+    reply_markup: dict,
+) -> bool:
+    if not thumbnail_file_ids:
+        return False
+
+    if len(thumbnail_file_ids) == 1:
+        return await _send_channel_photo(db, bot, channel_id, thumbnail_file_ids[0], caption, reply_markup)
+
+    downloaded: list[bytes] = []
+    for thumbnail_file_id in thumbnail_file_ids[:6]:
+        img_bytes = await _download_thumbnail_bytes(db, thumbnail_file_id)
+        if img_bytes:
+            downloaded.append(img_bytes)
+
+    if len(downloaded) >= 2:
+        collage = _build_thumbnail_collage(downloaded)
+        if collage:
+            reup = await _tg_upload_file(
+                bot.bot_token,
+                "sendPhoto",
+                data={
+                    "chat_id": str(int(channel_id)),
+                    "caption": caption,
+                    "reply_markup": json.dumps(reply_markup),
+                },
+                files={"photo": ("thumbs.jpg", collage, "image/jpeg")},
+            )
+            if reup and reup.get("ok"):
+                return True
+
+    logger.warning("Multiple-thumbnail collage failed; falling back to first thumbnail only")
+    return await _send_channel_photo(db, bot, channel_id, thumbnail_file_ids[0], caption, reply_markup)
+
+
 async def _post_to_channel(
     db: AsyncSession,
     bot,
@@ -1233,9 +1321,10 @@ async def _post_to_channel(
     duration: float | None,
     deep_link: str,
     thumbnail_file_ids: list[str],
+    channel_id_override: str | None = None,
 ) -> bool:
     svc = PlatformSettingsService(db)
-    channel_id = await svc.get("content_channel_id")
+    channel_id = channel_id_override or await svc.get("content_channel_id")
     if not channel_id:
         logger.warning("content_channel_id not configured - skipping channel post")
         return False
@@ -1246,14 +1335,7 @@ async def _post_to_channel(
         access_type, credit_cost, credit_mode, credit_per_item, item_count, deep_link,
     )
 
-    posted_any = False
-    for thumbnail_file_id in thumbnail_file_ids:
-        if await _send_channel_photo(db, bot, channel_id, thumbnail_file_id, caption, reply_markup):
-            posted_any = True
-        else:
-            logger.warning("Channel thumbnail post failed for file_id=%s", thumbnail_file_id[:30])
-
-    if posted_any:
+    if await _send_channel_thumbnail_post(db, bot, channel_id, thumbnail_file_ids, caption, reply_markup):
         return True
 
     result = await _tg_request(bot.bot_token, "sendMessage", {

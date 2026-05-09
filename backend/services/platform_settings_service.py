@@ -100,6 +100,7 @@ DEFAULTS: list[dict] = [
     {"key": "content_channel_name", "value": "Content Channel", "description": "Display name for the content channel shown to users", "category": "content"},
     {"key": "content_channel_id", "value": "", "description": "Telegram channel ID (numeric, e.g. -1001234567890) for auto-posting content", "category": "content"},
     {"key": "storage_group_id", "value": "", "description": "Private Telegram group ID used as media storage backend", "category": "content"},
+    {"key": "content_transfer_channels", "value": "[]", "description": "Saved destination channels for content transfer jobs", "category": "content"},
     {"key": "content_delete_seconds", "value": "0", "description": "Seconds after which delivered content messages are auto-deleted. 0 = never delete.", "category": "content"},
     {"key": "bot_welcome_message", "value": "👋 Welcome! Choose an option below:", "description": "Welcome message shown when user starts the bot", "category": "telegram"},
 

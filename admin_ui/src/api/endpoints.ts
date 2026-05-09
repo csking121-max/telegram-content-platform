@@ -284,6 +284,69 @@ export const bulkUpdateSettings = (settings: Record<string, string>) =>
 export const deletePlatformSetting = (key: string) =>
   apiClient.delete(`/admin/settings/${key}`);
 
+export interface TransferChannel {
+  id?: string;
+  name: string;
+  channel_id: string;
+  channel_link?: string;
+  storage_group_id?: string;
+  bot_id?: number | null;
+}
+
+export interface TransferPackRow {
+  id: number;
+  title: string;
+  access_type: string;
+  item_count: number;
+  created_at: string | null;
+}
+
+export interface TransferJob {
+  id: string;
+  status: string;
+  mode: string;
+  total: number;
+  completed: number;
+  failed: number;
+  rate_per_minute: number;
+  results: Array<Record<string, unknown>>;
+  error: string | null;
+  created_at: string | null;
+}
+
+export const getTransferChannels = () =>
+  apiClient.get<{ channels: TransferChannel[] }>("/admin/content-transfer/channels").then((r) => r.data.channels);
+
+export const saveTransferChannel = (channel: TransferChannel) =>
+  apiClient.post<TransferChannel>("/admin/content-transfer/channels", channel).then((r) => r.data);
+
+export const deleteTransferChannel = (id: string) =>
+  apiClient.delete(`/admin/content-transfer/channels/${id}`).then((r) => r.data);
+
+export const getTransferPacks = () =>
+  apiClient.get<TransferPackRow[]>("/admin/content-transfer/packs").then((r) => r.data);
+
+export const startTransferJob = (body: {
+  channel_id: string;
+  channel_name?: string;
+  channel_link?: string;
+  storage_group_id?: string;
+  bot_id: number;
+  pack_ids?: number[];
+  date_from?: string | null;
+  date_to?: string | null;
+  include_all?: boolean;
+  copy_to_storage?: boolean;
+  make_active_after?: boolean;
+  rate_per_minute?: number;
+}) => apiClient.post("/admin/content-transfer/jobs", body).then((r) => r.data);
+
+export const getTransferJobs = () =>
+  apiClient.get<TransferJob[]>("/admin/content-transfer/jobs").then((r) => r.data);
+
+export const cancelTransferJob = (jobId: string) =>
+  apiClient.post(`/admin/content-transfer/jobs/${jobId}/cancel`).then((r) => r.data);
+
 /* ── Notifications ─────────────────────────────────────── */
 
 export const triggerLowCreditNotifications = () =>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useFetch } from "../hooks/useFetch";
+import ContentTransferPanel from "../components/ContentTransferPanel";
 import type { PlatformSetting } from "../types";
 import { 
   getPlatformSettings, 
@@ -58,6 +59,7 @@ export default function Settings() {
   const [loadingCooldowns, setLoadingCooldowns] = useState(false);
   const [extendingId, setExtendingId] = useState<number | null>(null);
   const [extendSeconds, setExtendSeconds] = useState<Record<number, string>>({});
+  const [activeTab, setActiveTab] = useState<"settings" | "transfer">("settings");
 
   // Sync fetched settings into local state
   useEffect(() => {
@@ -206,7 +208,7 @@ export default function Settings() {
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1>⚙️ Platform Settings</h1>
-        <button
+        {activeTab === "settings" && <button
           onClick={handleSave}
           disabled={saving}
           style={{
@@ -221,7 +223,7 @@ export default function Settings() {
           }}
         >
           {saving ? "Saving..." : "💾 Save All Settings"}
-        </button>
+        </button>}
       </div>
       {message && (
         <div style={{ padding: 10, marginBottom: 12, background: message.includes("✅") ? "#d4edda" : "#f8d7da", borderRadius: 4 }}>
@@ -233,7 +235,40 @@ export default function Settings() {
         Configure all platform settings here. Changes take effect immediately after saving.
       </p>
 
-      {CATEGORIES.map((cat) => {
+      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+        <button
+          onClick={() => setActiveTab("settings")}
+          style={{
+            padding: "8px 16px",
+            border: "1px solid #3498db",
+            borderRadius: 6,
+            background: activeTab === "settings" ? "#3498db" : "#fff",
+            color: activeTab === "settings" ? "#fff" : "#3498db",
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+        >
+          Settings
+        </button>
+        <button
+          onClick={() => setActiveTab("transfer")}
+          style={{
+            padding: "8px 16px",
+            border: "1px solid #3498db",
+            borderRadius: 6,
+            background: activeTab === "transfer" ? "#3498db" : "#fff",
+            color: activeTab === "transfer" ? "#fff" : "#3498db",
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+        >
+          Content Transfer
+        </button>
+      </div>
+
+      {activeTab === "transfer" && <ContentTransferPanel />}
+
+      {activeTab === "settings" && CATEGORIES.map((cat) => {
         const items = settingsByCategory(cat);
         if (items.length === 0) return null;
         return (
