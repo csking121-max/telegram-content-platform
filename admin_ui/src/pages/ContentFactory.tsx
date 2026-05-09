@@ -78,6 +78,40 @@ function saveUploads(items: UploadedVideo[]) {
   } catch { /* quota exceeded — ignore */ }
 }
 
+const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v", "mkv", "webm", "avi", "wmv", "flv", "3gp"]);
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "bmp"]);
+
+function fileExtension(file: File) {
+  return file.name.split(".").pop()?.toLowerCase() || "";
+}
+
+function detectMediaType(file: File) {
+  const ext = fileExtension(file);
+  if (file.type.startsWith("video/") || VIDEO_EXTENSIONS.has(ext)) return "video";
+  if (file.type === "image/gif" || ext === "gif") return "animation";
+  if (file.type.startsWith("image/") || IMAGE_EXTENSIONS.has(ext)) return "photo";
+  return "document";
+}
+
+function readLocalVideoDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    const cleanup = () => URL.revokeObjectURL(url);
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null;
+      cleanup();
+      resolve(duration);
+    };
+    video.onerror = () => {
+      cleanup();
+      resolve(null);
+    };
+    video.src = url;
+  });
+}
+
 /* ── styles ────────────────────────────────────────────── */
 
 const card: React.CSSProperties = {
@@ -284,13 +318,7 @@ export default function ContentFactory() {
       const newVideos: UploadedVideo[] = [];
 
       for (const file of Array.from(files)) {
-        const mt = file.type.startsWith("video/")
-          ? "video"
-          : file.type === "image/gif"
-            ? "animation"
-            : file.type.startsWith("image/")
-              ? "photo"
-              : "document";
+        const mt = detectMediaType(file);
         const v: UploadedVideo = {
           id: uid(),
           filename: file.name,
@@ -314,6 +342,18 @@ export default function ContentFactory() {
       }
 
       setVideos((prev) => [...prev, ...newVideos]);
+
+      for (const staged of newVideos) {
+        if (staged.media_type !== "video" || !staged.file) continue;
+        readLocalVideoDuration(staged.file).then((duration) => {
+          if (!duration) return;
+          setVideos((prev) =>
+            prev.map((x) =>
+              x.id === staged.id && !x.duration ? { ...x, duration } : x,
+            ),
+          );
+        });
+      }
     },
     [bots, defaultUploadBotId, defaultDeliveryBotId, groupBotId, groupUploadBotId, mode],
   );
@@ -361,7 +401,7 @@ export default function ContentFactory() {
                       source: "auto",
                     })
                   : x.thumbnail_options,
-                duration: result.duration,
+                duration: result.duration || x.duration,
                 width: result.width,
                 height: result.height,
                 uploading: false,

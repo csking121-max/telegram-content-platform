@@ -12,6 +12,7 @@ from io import BytesIO
 import json
 import logging
 import math
+import mimetypes
 import os
 import subprocess
 import tempfile
@@ -49,6 +50,12 @@ _local_api_available: bool | None = None  # None = not yet checked
 
 # Track running asyncio tasks so multiple jobs can run concurrently
 _running_tasks: dict[str, asyncio.Task] = {}
+
+VIDEO_EXTENSIONS = {
+    ".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".wmv", ".flv", ".3gp",
+}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+ANIMATION_EXTENSIONS = {".gif"}
 
 
 async def _check_local_api() -> bool:
@@ -179,13 +186,16 @@ async def _tg_download_file(token: str, file_id: str) -> bytes | None:
 
 # ── Upload helpers ────────────────────────────────────────────
 
-def _detect_media_type(content_type: str) -> str:
-    ct = content_type.lower()
-    if ct.startswith("video/"):
+def _detect_media_type(content_type: str, filename: str | None = None) -> str:
+    guessed_type, _encoding = mimetypes.guess_type(filename or "")
+    ct = (content_type or guessed_type or "").split(";", 1)[0].lower()
+    ext = os.path.splitext(filename or "")[1].lower()
+
+    if ct.startswith("video/") or ext in VIDEO_EXTENSIONS:
         return "video"
-    if ct.startswith("image/gif"):
+    if ct.startswith("image/gif") or ext in ANIMATION_EXTENSIONS:
         return "animation"
-    if ct.startswith("image/"):
+    if ct.startswith("image/") or ext in IMAGE_EXTENSIONS:
         return "photo"
     return "document"
 
@@ -206,20 +216,50 @@ BLUR_FILTERS = {
 }
 
 
+def _coerce_duration(value: object) -> float | None:
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isfinite(duration) and duration > 0:
+        return duration
+    return None
+
+
+def _first_duration_from_ffprobe(output: str) -> float | None:
+    for line in output.replace("\r", "\n").splitlines():
+        duration = _coerce_duration(line.strip())
+        if duration:
+            return duration
+    return None
+
+
 def _get_video_duration(video_path: str) -> float | None:
     """Get video duration in seconds using ffprobe."""
-    try:
-        cmd = [
+    commands = [
+        [
             "ffprobe", "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             video_path,
-        ]
-        proc = subprocess.run(cmd, capture_output=True, timeout=10, text=True)
-        if proc.returncode == 0 and proc.stdout.strip():
-            return float(proc.stdout.strip())
-    except Exception as e:
-        logger.warning("ffprobe duration failed: %s", e)
+        ],
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path,
+        ],
+    ]
+    for cmd in commands:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=10, text=True)
+            if proc.returncode == 0 and proc.stdout.strip():
+                duration = _first_duration_from_ffprobe(proc.stdout)
+                if duration:
+                    return duration
+        except Exception as e:
+            logger.warning("ffprobe duration failed: %s", e)
     return None
 
 
@@ -351,7 +391,7 @@ async def upload_file(
 ):
     """Upload any file to the Telegram Storage Group."""
     ct = file.content_type or "application/octet-stream"
-    media_type = _detect_media_type(ct)
+    media_type = _detect_media_type(ct, file.filename)
 
     if bot_id:
         svc = BotService(db)
@@ -376,6 +416,15 @@ async def upload_file(
         if size_mb > 2048:
             raise HTTPException(413, "File must be under 2 GB")
 
+        local_duration: float | None = None
+        if media_type == "video":
+            loop = asyncio.get_running_loop()
+            local_duration = await loop.run_in_executor(None, _get_video_duration, tmp_path)
+            if local_duration:
+                logger.info("Upload duration from ffprobe: %.2fs for %s", local_duration, file.filename)
+            else:
+                logger.warning("Could not determine local duration for video %s", file.filename)
+
         # Check Local Bot API reachability (cached after first check)
         global _local_api_available
         if _local_api_available is None and TELEGRAM_LOCAL_API:
@@ -395,6 +444,8 @@ async def upload_file(
         extra_data: dict = {}
         if media_type == "video":
             extra_data["supports_streaming"] = "true"
+            if local_duration:
+                extra_data["duration"] = str(max(1, int(round(local_duration))))
 
         upload_timeout = max(120, int(size_mb / 50 * 60) + 60)
 
@@ -474,7 +525,7 @@ async def upload_file(
             "file_id": file_id,
             "filename": file.filename,
             "media_type": media_type,
-            "duration": info.get("duration"),
+            "duration": _coerce_duration(info.get("duration")) or local_duration,
             "width": info.get("width"),
             "height": info.get("height"),
             "thumbnail_file_id": thumbnail_file_id,
