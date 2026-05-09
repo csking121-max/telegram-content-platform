@@ -1,4 +1,4 @@
-"""Admin content transfer jobs for reposting packs to a new channel/storage group."""
+"""Admin content transfer jobs for reposting packs to a new channel."""
 from __future__ import annotations
 
 import asyncio
@@ -13,11 +13,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.api.admin.content_factory import _merge_thumbnail_ids, _post_to_channel, _tg_request
+from backend.api.admin.content_factory import _merge_thumbnail_ids, _post_to_channel, _telegram_chat_id, _tg_request
 from backend.database import AsyncSessionLocal
 from backend.dependencies import get_db
 from backend.engines.token_service import TokenService
-from backend.models.bot import Bot
 from backend.models.content_pack import ContentPack
 from backend.models.pack_item import PackItem
 from backend.models.publish_job import PublishJob
@@ -37,7 +36,6 @@ class TransferChannel(BaseModel):
     name: str
     channel_id: str
     channel_link: str = ""
-    storage_group_id: str = ""
     bot_id: int | None = None
 
 
@@ -57,13 +55,11 @@ class TransferStartRequest(BaseModel):
     channel_id: str
     channel_name: str = ""
     channel_link: str = ""
-    storage_group_id: str = ""
     bot_id: int
     pack_ids: list[int] = Field(default_factory=list)
     date_from: datetime | None = None
     date_to: datetime | None = None
     include_all: bool = True
-    copy_to_storage: bool = False
     make_active_after: bool = False
     rate_per_minute: int = 2
 
@@ -123,34 +119,16 @@ async def _latest_or_new_token(db: AsyncSession, pack_id: int) -> Token:
     return await token_svc.create(pack_id=pack_id)
 
 
-async def _copy_pack_items_to_storage(
-    db: AsyncSession,
-    bot: Bot,
-    pack: ContentPack,
-    storage_group_id: str,
-    job_id: str,
-) -> tuple[int, int]:
-    copied = 0
-    failed = 0
-    target_chat_id = int(storage_group_id)
-
-    for item in pack.items:
-        if await _is_cancelled(db, job_id):
-            break
-        result = await _tg_request(bot.bot_token, "copyMessage", {
-            "chat_id": target_chat_id,
-            "from_chat_id": item.storage_chat_id,
-            "message_id": item.storage_message_id,
-        })
-        message_id = (result or {}).get("result", {}).get("message_id")
-        if message_id:
-            item.storage_chat_id = target_chat_id
-            item.storage_message_id = int(message_id)
-            copied += 1
-        else:
-            failed += 1
-
-    return copied, failed
+async def _validate_destination_channel(bot_token: str, channel_id: str) -> None:
+    result = await _tg_request(bot_token, "getChat", {"chat_id": _telegram_chat_id(channel_id)})
+    if not result or not result.get("ok"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Destination channel is not reachable by the selected bot. "
+                "Check the channel ID and make the bot an admin/member of that channel."
+            ),
+        )
 
 
 async def _select_packs(db: AsyncSession, body: TransferStartRequest) -> list[ContentPack]:
@@ -184,11 +162,6 @@ async def _process_transfer_job(job_id: str, body: TransferStartRequest) -> None
                 if await _is_cancelled(db, job_id):
                     return
 
-                copied = 0
-                copy_failed = 0
-                if body.copy_to_storage and body.storage_group_id:
-                    copied, copy_failed = await _copy_pack_items_to_storage(db, bot, pack, body.storage_group_id, job_id)
-
                 token = await _latest_or_new_token(db, pack.id)
                 await db.commit()
 
@@ -213,8 +186,6 @@ async def _process_transfer_job(job_id: str, body: TransferStartRequest) -> None
                     "title": pack.title,
                     "deep_link": deep_link,
                     "channel_posted": posted,
-                    "copied_items": copied,
-                    "copy_failed": copy_failed,
                 }, completed_delta=1 if posted else 0, failed_delta=0 if posted else 1)
 
                 if delay > 0 and index < len(packs) - 1:
@@ -226,7 +197,6 @@ async def _process_transfer_job(job_id: str, body: TransferStartRequest) -> None
                     "content_channel_id": body.channel_id,
                     "content_channel_name": body.channel_name or "Content Channel",
                     "content_channel_link": body.channel_link,
-                    "storage_group_id": body.storage_group_id,
                 })
                 await db.commit()
     except asyncio.CancelledError:
@@ -303,12 +273,10 @@ async def start_transfer(body: TransferStartRequest, db: AsyncSession = Depends(
         raise HTTPException(400, "Destination channel ID is required")
     if not body.bot_id:
         raise HTTPException(400, "Delivery bot is required")
-    if body.copy_to_storage and not body.storage_group_id:
-        raise HTTPException(400, "Storage group ID is required when copying media")
-
     bot = await BotService(db).get_by_id(body.bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
+    await _validate_destination_channel(bot.bot_token, body.channel_id)
 
     packs = await _select_packs(db, body)
     if not packs:

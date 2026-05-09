@@ -50,11 +50,9 @@ export default function ContentTransferPanel() {
     name: "",
     channel_id: "",
     channel_link: "",
-    storage_group_id: "",
     bot_id: null,
   });
   const [includeAll, setIncludeAll] = useState(true);
-  const [copyToStorage, setCopyToStorage] = useState(false);
   const [makeActiveAfter, setMakeActiveAfter] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -116,7 +114,7 @@ export default function ContentTransferPanel() {
     if (!selectedChannelId || !window.confirm("Delete this transfer channel?")) return;
     await deleteTransferChannel(selectedChannelId);
     setSelectedChannelId("");
-    setForm({ name: "", channel_id: "", channel_link: "", storage_group_id: "", bot_id: bots[0]?.id ?? null });
+    setForm({ name: "", channel_id: "", channel_link: "", bot_id: bots[0]?.id ?? null });
     setChannels(await getTransferChannels());
   };
 
@@ -146,13 +144,11 @@ export default function ContentTransferPanel() {
         channel_id: form.channel_id,
         channel_name: form.name,
         channel_link: form.channel_link || "",
-        storage_group_id: form.storage_group_id || "",
         bot_id: form.bot_id,
         pack_ids: Array.from(selectedPackIds),
         date_from: dateFrom ? new Date(`${dateFrom}T00:00:00`).toISOString() : null,
         date_to: dateTo ? new Date(`${dateTo}T23:59:59`).toISOString() : null,
         include_all: includeAll,
-        copy_to_storage: copyToStorage,
         make_active_after: makeActiveAfter,
         rate_per_minute: rate,
       });
@@ -202,10 +198,6 @@ export default function ContentTransferPanel() {
             <input value={form.channel_link || ""} onChange={(e) => setForm({ ...form, channel_link: e.target.value })} style={input} />
           </div>
           <div>
-            <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Storage Group ID</label>
-            <input value={form.storage_group_id || ""} onChange={(e) => setForm({ ...form, storage_group_id: e.target.value })} style={{ ...input, fontFamily: "monospace" }} />
-          </div>
-          <div>
             <label style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>Delivery Bot</label>
             <select value={form.bot_id || ""} onChange={(e) => setForm({ ...form, bot_id: Number(e.target.value) })} style={input}>
               {bots.map((bot) => <option key={bot.id} value={bot.id}>@{bot.bot_username}</option>)}
@@ -224,8 +216,7 @@ export default function ContentTransferPanel() {
         <h3 style={{ marginTop: 0 }}>Transfer Options</h3>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
           <label><input type="checkbox" checked={includeAll} onChange={(e) => setIncludeAll(e.target.checked)} /> All matching packs</label>
-          <label><input type="checkbox" checked={copyToStorage} onChange={(e) => setCopyToStorage(e.target.checked)} /> Copy media to selected storage group</label>
-          <label><input type="checkbox" checked={makeActiveAfter} onChange={(e) => setMakeActiveAfter(e.target.checked)} /> Make selected channel/storage active after transfer</label>
+          <label><input type="checkbox" checked={makeActiveAfter} onChange={(e) => setMakeActiveAfter(e.target.checked)} /> Make selected channel active after transfer</label>
           <label>Rate/min <input type="number" min={0} value={rate} onChange={(e) => setRate(Number(e.target.value || 0))} style={{ width: 70, padding: 6 }} /></label>
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "end", flexWrap: "wrap" }}>

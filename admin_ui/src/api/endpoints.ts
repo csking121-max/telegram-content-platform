@@ -289,7 +289,6 @@ export interface TransferChannel {
   name: string;
   channel_id: string;
   channel_link?: string;
-  storage_group_id?: string;
   bot_id?: number | null;
 }
 
@@ -330,13 +329,11 @@ export const startTransferJob = (body: {
   channel_id: string;
   channel_name?: string;
   channel_link?: string;
-  storage_group_id?: string;
   bot_id: number;
   pack_ids?: number[];
   date_from?: string | null;
   date_to?: string | null;
   include_all?: boolean;
-  copy_to_storage?: boolean;
   make_active_after?: boolean;
   rate_per_minute?: number;
 }) => apiClient.post("/admin/content-transfer/jobs", body).then((r) => r.data);

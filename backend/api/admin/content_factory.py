@@ -1185,6 +1185,14 @@ def _build_channel_keyboard(
     return {"inline_keyboard": rows}
 
 
+def _telegram_chat_id(channel_id: str) -> int | str:
+    value = str(channel_id).strip()
+    try:
+        return int(value)
+    except ValueError:
+        return value
+
+
 async def _send_channel_photo(
     db: AsyncSession,
     bot,
@@ -1194,7 +1202,7 @@ async def _send_channel_photo(
     reply_markup: dict,
 ) -> bool:
     result = await _tg_request(bot.bot_token, "sendPhoto", {
-        "chat_id": int(channel_id),
+        "chat_id": _telegram_chat_id(channel_id),
         "photo": thumbnail_file_id,
         "caption": caption,
         "reply_markup": reply_markup,
@@ -1212,7 +1220,7 @@ async def _send_channel_photo(
                 bot.bot_token,
                 "sendPhoto",
                 data={
-                    "chat_id": str(int(channel_id)),
+                    "chat_id": str(_telegram_chat_id(channel_id)),
                     "caption": caption,
                     "reply_markup": json.dumps(reply_markup),
                 },
@@ -1296,7 +1304,7 @@ async def _send_channel_thumbnail_post(
                 bot.bot_token,
                 "sendPhoto",
                 data={
-                    "chat_id": str(int(channel_id)),
+                    "chat_id": str(_telegram_chat_id(channel_id)),
                     "caption": caption,
                     "reply_markup": json.dumps(reply_markup),
                 },
@@ -1339,7 +1347,7 @@ async def _post_to_channel(
         return True
 
     result = await _tg_request(bot.bot_token, "sendMessage", {
-        "chat_id": int(channel_id),
+        "chat_id": _telegram_chat_id(channel_id),
         "text": f"{caption}\n\n{deep_link}",
         "reply_markup": reply_markup,
     })

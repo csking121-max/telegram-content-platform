@@ -41,6 +41,7 @@ interface PublishDefaults {
   groupCreditPerItem: number;
   uploadBotId: number;
   deliveryBotId: number;
+  uploadConcurrency: number;
 }
 
 function loadDefaults(): Partial<PublishDefaults> {
@@ -169,6 +170,8 @@ export default function ContentFactory() {
   const [publishing, setPublishing] = useState(false);
   const [ratePerMinute, setRatePerMinute] = useState(defaults.ratePerMinute ?? 0);
   const [deletionSeconds, setDeletionSeconds] = useState(defaults.deletionSeconds ?? 0);
+  const [uploadConcurrency, setUploadConcurrency] = useState(Math.min(10, Math.max(1, defaults.uploadConcurrency ?? 3)));
+  const [uploadQueueRunning, setUploadQueueRunning] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -316,8 +319,6 @@ export default function ContentFactory() {
   );
 
   // Upload staged files to Telegram — concurrent with configurable parallelism
-  const UPLOAD_CONCURRENCY = 3;
-
   const uploadSingleFile = useCallback(async (v: UploadedVideo, skipAutoThumb: boolean) => {
     if (!v.file) return;
     const startTime = Date.now();
@@ -325,7 +326,7 @@ export default function ContentFactory() {
     // Set initial progress state
     setVideos((prev) =>
       prev.map((x) =>
-        x.id === v.id ? { ...x, uploadStartTime: startTime, totalBytes, uploadedBytes: 0, uploadProgress: 0 } : x,
+        x.id === v.id ? { ...x, uploading: true, uploadStartTime: startTime, totalBytes, uploadedBytes: 0, uploadProgress: 0 } : x,
       ),
     );
     try {
@@ -386,39 +387,51 @@ export default function ContentFactory() {
     }
   }, []);
 
+  const runUploadQueue = useCallback(async (queue: UploadedVideo[]) => {
+    let nextIndex = 0;
+    const slots = Math.min(uploadConcurrency, queue.length);
+    const worker = async () => {
+      while (nextIndex < queue.length) {
+        const current = queue[nextIndex++];
+        await uploadSingleFile(current, !autoThumb);
+      }
+    };
+    await Promise.all(Array.from({ length: slots }, () => worker()));
+  }, [uploadConcurrency, uploadSingleFile, autoThumb]);
+
   const handleStartUpload = useCallback(async () => {
+    if (uploadQueueRunning) return;
     const staged = videos.filter((v) => !v.uploaded && !v.uploading && v.file && !v.error);
     if (staged.length === 0) return;
 
-    // Mark all staged as uploading
-    setVideos((prev) =>
-      prev.map((v) => (v.file && !v.uploaded && !v.error ? { ...v, uploading: true } : v)),
-    );
-
-    // Process in batches of UPLOAD_CONCURRENCY
-    for (let i = 0; i < staged.length; i += UPLOAD_CONCURRENCY) {
-      const batch = staged.slice(i, i + UPLOAD_CONCURRENCY);
-      await Promise.all(batch.map((v) => uploadSingleFile(v, !autoThumb)));
+    setUploadQueueRunning(true);
+    try {
+      await runUploadQueue(staged);
+    } finally {
+      setUploadQueueRunning(false);
     }
-  }, [videos, uploadSingleFile, autoThumb]);
+  }, [videos, runUploadQueue, uploadQueueRunning]);
 
   // Retry all failed uploads
   const handleRetryFailed = useCallback(async () => {
+    if (uploadQueueRunning) return;
     const failed = videos.filter((v) => v.error && v.file && !v.uploaded);
     if (failed.length === 0) return;
 
-    // Clear errors and mark as uploading
+    // Clear errors before workers pick files up.
     setVideos((prev) =>
       prev.map((v) =>
-        v.error && v.file && !v.uploaded ? { ...v, error: undefined, uploading: true } : v,
+        v.error && v.file && !v.uploaded ? { ...v, error: undefined, uploading: false } : v,
       ),
     );
 
-    for (let i = 0; i < failed.length; i += UPLOAD_CONCURRENCY) {
-      const batch = failed.slice(i, i + UPLOAD_CONCURRENCY);
-      await Promise.all(batch.map((v) => uploadSingleFile(v, !autoThumb)));
+    setUploadQueueRunning(true);
+    try {
+      await runUploadQueue(failed.map((v) => ({ ...v, error: undefined, uploading: false })));
+    } finally {
+      setUploadQueueRunning(false);
     }
-  }, [videos, uploadSingleFile, autoThumb]);
+  }, [videos, runUploadQueue, uploadQueueRunning]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -1014,6 +1027,7 @@ export default function ContentFactory() {
                 groupCreditPerItem,
                 uploadBotId: defaultUploadBotId,
                 deliveryBotId: defaultDeliveryBotId,
+                uploadConcurrency,
               });
               alert("Defaults saved!");
             }}
@@ -1037,6 +1051,17 @@ export default function ContentFactory() {
               <option value={5}>5 per minute</option>
               <option value={10}>10 per minute</option>
             </select>
+          </div>
+          <div>
+            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Upload Slots</label>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={uploadConcurrency}
+              onChange={(e) => setUploadConcurrency(Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
+              style={{ ...input, width: 90 }}
+            />
           </div>
           <div>
             <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Auto-Delete (sec)</label>
@@ -1199,8 +1224,8 @@ export default function ContentFactory() {
         <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f0f7ff", border: "1px solid #c5dcf5" }}>
           <div>
             <span style={{ fontWeight: 600, fontSize: 14 }}>
-              {uploadingVideos.length > 0
-                ? `⏳ Uploading ${uploadingVideos.length} file${uploadingVideos.length > 1 ? "s" : ""} (${UPLOAD_CONCURRENCY} concurrent)…`
+              {uploadQueueRunning
+                ? `⏳ Uploading ${uploadingVideos.length} active, ${stagedVideos.length} queued (${uploadConcurrency} slots)…`
                 : `📂 ${stagedVideos.length} file${stagedVideos.length > 1 ? "s" : ""} staged`}
             </span>
             {failedVideos.length > 0 && (
@@ -1209,7 +1234,7 @@ export default function ContentFactory() {
               </span>
             )}
             <span style={{ fontSize: 12, color: "#888", marginLeft: 12 }}>
-              ({UPLOAD_CONCURRENCY} files upload simultaneously)
+              ({uploadConcurrency} files upload simultaneously)
             </span>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1244,13 +1269,13 @@ export default function ContentFactory() {
             {failedVideos.length > 0 && (
               <button
                 onClick={handleRetryFailed}
-                disabled={uploadingVideos.length > 0}
+                disabled={uploadQueueRunning}
                 style={{
                   ...btnPrimary,
                   padding: "10px 24px",
                   fontSize: 15,
                   background: "#d32f2f",
-                  opacity: uploadingVideos.length > 0 ? 0.6 : 1,
+                  opacity: uploadQueueRunning ? 0.6 : 1,
                 }}
               >
                 🔄 Retry {failedVideos.length} Failed
@@ -1258,15 +1283,15 @@ export default function ContentFactory() {
             )}
             <button
               onClick={handleStartUpload}
-              disabled={uploadingVideos.length > 0 || stagedVideos.length === 0}
+              disabled={uploadQueueRunning || stagedVideos.length === 0}
               style={{
                 ...btnPrimary,
                 padding: "10px 24px",
                 fontSize: 15,
-                opacity: uploadingVideos.length > 0 || stagedVideos.length === 0 ? 0.6 : 1,
+                opacity: uploadQueueRunning || stagedVideos.length === 0 ? 0.6 : 1,
               }}
             >
-              {uploadingVideos.length > 0 ? "⏳ Uploading…" : "🚀 Start Upload"}
+              {uploadQueueRunning ? "⏳ Uploading…" : "🚀 Start Upload"}
             </button>
           </div>
         </div>
