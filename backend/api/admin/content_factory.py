@@ -19,7 +19,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -634,7 +634,9 @@ class PublishItem(BaseModel):
     credit_mode: str = "per_item"
     credit_per_item: int = 1
     bot_id: int
+    duration: float | None = None
     thumbnail_file_id: str | None = None
+    thumbnail_file_ids: list[str] = Field(default_factory=list)
 
 
 class GroupSettings(BaseModel):
@@ -644,7 +646,9 @@ class GroupSettings(BaseModel):
     credit_mode: str = "per_item"
     credit_per_item: int = 1
     bot_id: int
+    duration: float | None = None
     thumbnail_file_id: str | None = None
+    thumbnail_file_ids: list[str] = Field(default_factory=list)
 
 
 class PublishRequest(BaseModel):
@@ -789,10 +793,13 @@ async def _publish_group(job_id: str, body: PublishRequest):
         await db.commit()
 
         deep_link = f"https://t.me/{bot.bot_username}?start={token.token}"
+        thumbnail_ids = _merge_thumbnail_ids(gs.thumbnail_file_id, gs.thumbnail_file_ids)
+        total_duration = sum((item.duration or 0) for item in body.items)
 
         channel_posted = await _post_to_channel(
             db, bot, gs.title, gs.access_type, gs.credit_cost,
-            len(body.items), deep_link, gs.thumbnail_file_id,
+            gs.credit_mode, gs.credit_per_item, len(body.items), total_duration,
+            deep_link, thumbnail_ids,
         )
 
         await _append_result(job_id, {
@@ -841,14 +848,16 @@ async def _publish_solo(job_id: str, body: PublishRequest, delay: float):
                 await db.commit()
 
                 deep_link = f"https://t.me/{bot.bot_username}?start={token.token}"
+                thumbnail_ids = _merge_thumbnail_ids(item.thumbnail_file_id, item.thumbnail_file_ids)
 
                 channel_posted = await _post_to_channel(
                     db, bot, title, item.access_type, item.credit_cost,
-                    1, deep_link, item.thumbnail_file_id,
+                    item.credit_mode, item.credit_per_item, 1, item.duration,
+                    deep_link, thumbnail_ids,
                 )
                 logger.info(
-                    "Solo publish item %d: thumbnail_file_id=%s, channel_posted=%s",
-                    idx, item.thumbnail_file_id[:30] if item.thumbnail_file_id else "None",
+                    "Solo publish item %d: thumbnail_count=%s, channel_posted=%s",
+                    idx, len(thumbnail_ids),
                     channel_posted,
                 )
 
@@ -1077,7 +1086,8 @@ async def republish_pack(
 
     posted = await _post_to_channel(
         db, bot, pack.title, pack.access_type, pack.credit_cost,
-        len(pack.items), deep_link, thumb,
+        pack.credit_mode, pack.credit_per_item, len(pack.items), None,
+        deep_link, _merge_thumbnail_ids(thumb, []),
     )
 
     return {
@@ -1117,3 +1127,138 @@ async def get_categories(db: AsyncSession = Depends(get_db)):
             seen.add(access_type)
 
     return categories
+
+
+def _merge_thumbnail_ids(primary: str | None, many: list[str] | None) -> list[str]:
+    ids: list[str] = []
+    for fid in [primary, *(many or [])]:
+        if fid and fid not in ids:
+            ids.append(fid)
+    return ids
+
+
+def _format_duration(seconds: float | None) -> str:
+    total = max(0, int(seconds or 0))
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    secs = total % 60
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_category(access_type: str) -> str:
+    return (access_type or "free").replace("_", " ").strip().title()
+
+
+def _effective_credit_cost(credit_cost: int, credit_mode: str, credit_per_item: int, item_count: int) -> int:
+    if credit_mode == "per_pack":
+        return max(int(credit_cost or 0), 0)
+    return max(int(credit_per_item or 0) * max(item_count, 1), 0)
+
+
+def _build_channel_keyboard(
+    access_type: str,
+    credit_cost: int,
+    credit_mode: str,
+    credit_per_item: int,
+    item_count: int,
+    deep_link: str,
+) -> dict:
+    access = (access_type or "free").lower()
+    display_cost = _effective_credit_cost(credit_cost, credit_mode, credit_per_item, item_count)
+
+    if access in ("credits", "credits_only") and display_cost > 0:
+        rows = [[{"text": f"Access Content {display_cost} Credits", "url": deep_link}]]
+    elif access not in ("free", "credits", "credits_only") and display_cost > 0:
+        rows = [
+            [{"text": f"Watch with {_format_category(access_type)}", "url": deep_link}],
+            [{"text": f"Watch with {display_cost} Credits", "url": deep_link}],
+        ]
+    elif access not in ("free", "credits", "credits_only"):
+        rows = [[{"text": f"Watch with {_format_category(access_type)}", "url": deep_link}]]
+    else:
+        rows = [[{"text": "Access Content", "url": deep_link}]]
+    return {"inline_keyboard": rows}
+
+
+async def _send_channel_photo(
+    db: AsyncSession,
+    bot,
+    channel_id: str,
+    thumbnail_file_id: str,
+    caption: str,
+    reply_markup: dict,
+) -> bool:
+    result = await _tg_request(bot.bot_token, "sendPhoto", {
+        "chat_id": int(channel_id),
+        "photo": thumbnail_file_id,
+        "caption": caption,
+        "reply_markup": reply_markup,
+    })
+    if result:
+        return True
+
+    logger.info("sendPhoto with file_id failed for channel post, trying download+re-upload fallback")
+    bot_svc = BotService(db)
+    all_bots = await bot_svc.list_active()
+    for src_bot in all_bots:
+        img_bytes = await _tg_download_file(src_bot.bot_token, thumbnail_file_id)
+        if img_bytes:
+            reup = await _tg_upload_file(
+                bot.bot_token,
+                "sendPhoto",
+                data={
+                    "chat_id": str(int(channel_id)),
+                    "caption": caption,
+                    "reply_markup": json.dumps(reply_markup),
+                },
+                files={"photo": ("thumb.jpg", img_bytes, "image/jpeg")},
+            )
+            if reup and reup.get("ok"):
+                return True
+            break
+    return False
+
+
+async def _post_to_channel(
+    db: AsyncSession,
+    bot,
+    title: str,
+    access_type: str,
+    credit_cost: int,
+    credit_mode: str,
+    credit_per_item: int,
+    item_count: int,
+    duration: float | None,
+    deep_link: str,
+    thumbnail_file_ids: list[str],
+) -> bool:
+    svc = PlatformSettingsService(db)
+    channel_id = await svc.get("content_channel_id")
+    if not channel_id:
+        logger.warning("content_channel_id not configured - skipping channel post")
+        return False
+
+    file_label = "File" if item_count == 1 else "Files"
+    caption = f"{title}\n{_format_category(access_type)}\n{item_count} {file_label} & {_format_duration(duration)}"
+    reply_markup = _build_channel_keyboard(
+        access_type, credit_cost, credit_mode, credit_per_item, item_count, deep_link,
+    )
+
+    posted_any = False
+    for thumbnail_file_id in thumbnail_file_ids:
+        if await _send_channel_photo(db, bot, channel_id, thumbnail_file_id, caption, reply_markup):
+            posted_any = True
+        else:
+            logger.warning("Channel thumbnail post failed for file_id=%s", thumbnail_file_id[:30])
+
+    if posted_any:
+        return True
+
+    result = await _tg_request(bot.bot_token, "sendMessage", {
+        "chat_id": int(channel_id),
+        "text": f"{caption}\n\n{deep_link}",
+        "reply_markup": reply_markup,
+    })
+    return result is not None

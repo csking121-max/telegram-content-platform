@@ -1,21 +1,22 @@
 # Production overrides for Oracle Cloud VM (2 OCPU, 8GB RAM)
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
-# This file ONLY changes what's different from docker-compose.yml:
-#   - Removes dev bind-mounts (code is baked into images)
-#   - Scales gunicorn to 4 workers (we have 8GB, can afford it)
-#   - Locks down DB/Redis ports (not exposed to host in prod)
-#   - Adds memory limits so one runaway container cannot kill the VM
+# This file only changes what is different from docker-compose.yml:
+# - Removes dev code bind-mounts where code is baked into images
+# - Scales gunicorn to 2 workers
+# - Locks down DB/Redis ports
+# - Adds memory limits
 
 services:
   db:
-    ports: []                        # do NOT expose 5432 to the internet
+    ports: []
 
   redis:
-    ports: []                        # do NOT expose 6379 to the internet
+    ports: []
 
   backend:
-    volumes: []                      # remove dev bind-mount — use baked image
+    volumes:
+      - ./backups:/app/backups
     command: >
       gunicorn backend.main:app
       -k uvicorn.workers.UvicornWorker
@@ -30,10 +31,11 @@ services:
           memory: 2g
 
   worker:
-    volumes: []                      # remove dev bind-mounts
+    volumes:
+      - ./backups:/app/backups
     environment:
-      WORKER_CONCURRENCY: "8"        # 8GB RAM → can run more concurrent tasks
-      WORKER_POLL_INTERVAL: "0.5"    # fast polling is fine on local Redis
+      WORKER_CONCURRENCY: "8"
+      WORKER_POLL_INTERVAL: "0.5"
     deploy:
       resources:
         limits:

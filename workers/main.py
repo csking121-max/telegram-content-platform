@@ -3,7 +3,7 @@ Worker entry-point — polls Redis queues and dispatches tasks.
 
 Each worker type runs in its own asyncio loop.
 The Docker Compose service starts this file; the ``WORKER_TYPE`` env var
-selects which worker to run (delivery | deletion | credit | all).
+selects which worker to run (delivery | deletion | credit | backup | all).
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ async def _run_all() -> None:
     from workers.expiry_notify_worker import ExpiryNotifyWorker
     from workers.payment_recheck_worker import PaymentRecheckWorker
     from workers.low_credit_notify_worker import LowCreditNotifyWorker
+    from workers.backup_worker import BackupWorker
 
     worker_type = os.getenv("WORKER_TYPE", "all").lower()
 
@@ -71,6 +72,8 @@ async def _run_all() -> None:
         tasks.append(asyncio.create_task(_supervised("payment_recheck", lambda: PaymentRecheckWorker().run())))
     if worker_type in ("low_credit_notify", "all"):
         tasks.append(asyncio.create_task(_supervised("low_credit_notify", lambda: LowCreditNotifyWorker().run())))
+    if worker_type in ("backup", "all"):
+        tasks.append(asyncio.create_task(_supervised("backup", lambda: BackupWorker().run())))
 
     if not tasks:
         logger.error("Unknown WORKER_TYPE=%s", worker_type)

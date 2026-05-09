@@ -192,10 +192,13 @@ export default function ContentFactory() {
   const [groupCreditCost, setGroupCreditCost] = useState(defaults.groupCreditCost ?? 0);
   const [groupCreditMode, setGroupCreditMode] = useState(defaults.groupCreditMode || "per_item");
   const [groupCreditPerItem, setGroupCreditPerItem] = useState(defaults.groupCreditPerItem ?? 1);
+  const [groupUploadBotId, setGroupUploadBotId] = useState(0);
   const [groupBotId, setGroupBotId] = useState(0);
+  const [groupBlur, setGroupBlur] = useState("none");
   const [groupThumbId, setGroupThumbId] = useState("");
   const [groupThumbOptions, setGroupThumbOptions] = useState<ThumbnailOption[]>([]);
   const [groupThumbSourceId, setGroupThumbSourceId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [autoThumb, setAutoThumb] = useState(true);
 
   // Persist uploads to sessionStorage so tab switches don't lose them
@@ -218,7 +221,10 @@ export default function ContentFactory() {
       .then((b) => {
         setBots(b);
         if (b.length > 0) {
-          setGroupBotId(defaults.deliveryBotId || b[0].id);
+          const initialUpload = defaults.uploadBotId || b[0].id;
+          const initialDelivery = defaults.deliveryBotId || initialUpload;
+          setGroupUploadBotId(initialUpload);
+          setGroupBotId(initialDelivery);
         }
       })
       .catch(() => setBots([]));
@@ -270,8 +276,8 @@ export default function ContentFactory() {
   // Stage files without uploading — user picks bots first, then clicks "Start Upload"
   const handleFiles = useCallback(
     (files: FileList | File[]) => {
-      const defUpload = defaultUploadBotId || (bots.length > 0 ? bots[0].id : 0);
-      const defDelivery = defaultDeliveryBotId || (bots.length > 0 ? bots[0].id : 0);
+      const defUpload = (mode === "group" && groupUploadBotId) || defaultUploadBotId || (bots.length > 0 ? bots[0].id : 0);
+      const defDelivery = (mode === "group" && groupBotId) || defaultDeliveryBotId || defUpload;
       const newVideos: UploadedVideo[] = [];
 
       for (const file of Array.from(files)) {
@@ -306,7 +312,7 @@ export default function ContentFactory() {
 
       setVideos((prev) => [...prev, ...newVideos]);
     },
-    [bots, defaultUploadBotId, defaultDeliveryBotId],
+    [bots, defaultUploadBotId, defaultDeliveryBotId, groupBotId, groupUploadBotId, mode],
   );
 
   // Upload staged files to Telegram — concurrent with configurable parallelism
@@ -443,6 +449,36 @@ export default function ContentFactory() {
     return [...existing, option];
   };
 
+  const uniqueThumbIds = (primary?: string | null, options?: ThumbnailOption[]) => {
+    const ids: string[] = [];
+    [primary || "", ...(options || []).map((o) => o.file_id)].forEach((fid) => {
+      if (fid && !ids.includes(fid)) ids.push(fid);
+    });
+    return ids;
+  };
+
+  const patchVideos = (ids: Set<string>, patch: Partial<UploadedVideo>) => {
+    setVideos((prev) => prev.map((v) => (ids.has(v.id) ? { ...v, ...patch } : v)));
+  };
+
+  const selectedVideos = videos.filter((v) => selectedIds.has(v.id));
+  const readySelectedVideos = selectedVideos.filter((v) => v.uploaded && !v.error && v.storage_message_id > 0);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedIds(new Set(videos.map((v) => v.id)));
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
   const addVideoThumbOption = (videoId: string, option: ThumbnailOption) => {
     setVideos((prev) =>
       prev.map((v) =>
@@ -565,6 +601,11 @@ export default function ContentFactory() {
     setVideos((prev) => prev.map((v) => ({ ...v, [field]: value })));
   };
 
+  const applyToSelected = (patch: Partial<UploadedVideo>) => {
+    if (selectedIds.size === 0) return;
+    patchVideos(selectedIds, patch);
+  };
+
   /* ── publish ────────────────────────────────────── */
 
   const readyVideos = videos.filter((v) => v.uploaded && !v.error && v.storage_message_id > 0);
@@ -604,7 +645,11 @@ export default function ContentFactory() {
           credit_mode: mode === "group" ? groupCreditMode : v.credit_mode,
           credit_per_item: mode === "group" ? groupCreditPerItem : v.credit_per_item,
           bot_id: mode === "group" ? groupBotId : v.bot_id,
+          duration: v.duration || null,
           thumbnail_file_id: thumbId,
+          thumbnail_file_ids: mode === "group"
+            ? uniqueThumbIds(groupThumbId, groupAvailableThumbOptions)
+            : uniqueThumbIds(v.thumbnail_file_id, v.thumbnail_options),
         };
       });
 
@@ -623,7 +668,9 @@ export default function ContentFactory() {
           credit_mode: groupCreditMode,
           credit_per_item: groupCreditPerItem,
           bot_id: groupBotId,
+          duration: readyVideos.reduce((sum, v) => sum + (v.duration || 0), 0),
           thumbnail_file_id: groupThumbId || null,
+          thumbnail_file_ids: uniqueThumbIds(groupThumbId, groupAvailableThumbOptions),
         };
       }
 
@@ -1266,11 +1313,44 @@ export default function ContentFactory() {
               />
             </div>
             <div style={{ flex: "0 0 160px" }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Bot</label>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Upload Bot</label>
+              <select
+                value={groupUploadBotId}
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  setGroupUploadBotId(id);
+                  setGroupBotId(id);
+                  patchVideos(new Set(videos.filter((v) => !v.uploaded).map((v) => v.id)), { upload_bot_id: id, bot_id: id });
+                }}
+                style={select_}
+              >
+                {bots.map((b) => (
+                  <option key={b.id} value={b.id}>@{b.bot_username}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: "0 0 160px" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Delivery Bot</label>
               <select value={groupBotId} onChange={(e) => setGroupBotId(Number(e.target.value))} style={select_}>
                 {bots.map((b) => (
                   <option key={b.id} value={b.id}>@{b.bot_username}</option>
                 ))}
+              </select>
+            </div>
+            <div style={{ flex: "0 0 130px" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Blur</label>
+              <select
+                value={groupBlur}
+                onChange={(e) => {
+                  setGroupBlur(e.target.value);
+                  if (selectedGroupSource) updateVideo(selectedGroupSource.id, { blur: e.target.value });
+                }}
+                style={select_}
+              >
+                <option value="none">No Blur</option>
+                <option value="light">Light Blur</option>
+                <option value="medium">Medium Blur</option>
+                <option value="heavy">Heavy Blur</option>
               </select>
             </div>
             <div style={{ flex: "1 1 300px" }}>
@@ -1278,7 +1358,11 @@ export default function ContentFactory() {
               {groupVideoSources.length > 0 && (
                 <select
                   value={selectedGroupSource?.id || ""}
-                  onChange={(e) => setGroupThumbSourceId(e.target.value)}
+                  onChange={(e) => {
+                    setGroupThumbSourceId(e.target.value);
+                    const source = groupVideoSources.find((v) => v.id === e.target.value);
+                    if (source?.blur) setGroupBlur(source.blur);
+                  }}
                   style={{ ...select_, marginBottom: 6 }}
                 >
                   {groupVideoSources.map((v) => (
@@ -1292,7 +1376,7 @@ export default function ContentFactory() {
                 onUpload={(file) => handleGroupThumb(file)}
                 options={groupAvailableThumbOptions}
                 videoFile={selectedGroupSource?.file}
-                blur={selectedGroupSource?.blur}
+                blur={groupBlur}
                 onFramePicked={(fid, ts) => addGroupThumbOption({
                   file_id: fid,
                   label: `Frame ${formatTimestamp(ts)} from ${selectedGroupSource?.filename || "group file"}`,
@@ -1366,9 +1450,99 @@ export default function ContentFactory() {
             )}
           </div>
 
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={videos.length > 0 && selectedIds.size === videos.length}
+                onChange={(e) => e.target.checked ? selectAllVisible() : clearSelection()}
+              />
+              Select all
+            </label>
+            <button onClick={clearSelection} style={{ ...btn, padding: "5px 10px", background: "#eee" }}>
+              Clear
+            </button>
+            <span style={{ fontSize: 13, color: "#666" }}>{selectedIds.size} selected</span>
+          </div>
+
+          {selectedIds.size > 0 && (
+            <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap", padding: 12, background: "#f7fbff", border: "1px solid #cfe4fa", borderRadius: 6, marginBottom: 12 }}>
+              <div style={{ width: 170 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600 }}>Title</label>
+                <input placeholder="Apply title" onChange={(e) => applyToSelected({ title: e.target.value })} style={input} />
+              </div>
+              <div style={{ width: 150 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600 }}>Category</label>
+                <select onChange={(e) => e.target.value && applyToSelected({ access_type: e.target.value })} style={select_} defaultValue="">
+                  <option value="">No change</option>
+                  {categories.map((c) => <option key={c.tag} value={c.tag}>{c.label}</option>)}
+                </select>
+              </div>
+              <div style={{ width: 120 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600 }}>Credit Mode</label>
+                <select onChange={(e) => e.target.value && applyToSelected({ credit_mode: e.target.value })} style={select_} defaultValue="">
+                  <option value="">No change</option>
+                  <option value="per_item">Per Item</option>
+                  <option value="per_pack">Per Pack</option>
+                </select>
+              </div>
+              <div style={{ width: 90 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600 }}>Cost</label>
+                <input type="number" min={0} placeholder="0" onChange={(e) => {
+                  const val = Number(e.target.value || 0);
+                  selectedVideos.forEach((v) => {
+                    updateVideo(v.id, v.credit_mode === "per_pack" ? { credit_cost: val } : { credit_per_item: val });
+                  });
+                }} style={input} />
+              </div>
+              <div style={{ width: 155 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600 }}>Upload Bot</label>
+                <select
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    const id = Number(e.target.value);
+                    applyToSelected({ upload_bot_id: id, bot_id: id });
+                  }}
+                  style={select_}
+                  defaultValue=""
+                >
+                  <option value="">No change</option>
+                  {bots.map((b) => <option key={b.id} value={b.id}>@{b.bot_username}</option>)}
+                </select>
+              </div>
+              <div style={{ width: 155 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600 }}>Delivery Bot</label>
+                <select onChange={(e) => e.target.value && applyToSelected({ bot_id: Number(e.target.value) })} style={select_} defaultValue="">
+                  <option value="">No change</option>
+                  {bots.map((b) => <option key={b.id} value={b.id}>@{b.bot_username}</option>)}
+                </select>
+              </div>
+              <div style={{ width: 125 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600 }}>Blur</label>
+                <select onChange={(e) => e.target.value && applyToSelected({ blur: e.target.value })} style={select_} defaultValue="">
+                  <option value="">No change</option>
+                  <option value="none">No Blur</option>
+                  <option value="light">Light Blur</option>
+                  <option value="medium">Medium Blur</option>
+                  <option value="heavy">Heavy Blur</option>
+                </select>
+              </div>
+              {defaultThumbs.length > 0 && (
+                <div style={{ width: 160 }}>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 600 }}>Thumbnail</label>
+                  <select onChange={(e) => e.target.value && applyToSelected({ thumbnail_file_id: e.target.value })} style={select_} defaultValue="">
+                    <option value="">No change</option>
+                    {defaultThumbs.map((t) => <option key={t.id} value={t.file_id}>{t.name}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
+                <th style={thStyle}></th>
                 <th style={thStyle}>#</th>
                 <th style={thStyle}>Filename</th>
                 {mode === "solo" && (
@@ -1390,6 +1564,13 @@ export default function ContentFactory() {
             <tbody>
               {videos.map((v, i) => (
                 <tr key={v.id} style={{ background: v.error ? "#fff5f5" : undefined }}>
+                  <td style={tdStyle}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(v.id)}
+                      onChange={() => toggleSelected(v.id)}
+                    />
+                  </td>
                   <td style={tdStyle}>{i + 1}</td>
                   <td style={{ ...tdStyle, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {v.filename}
@@ -1441,7 +1622,10 @@ export default function ContentFactory() {
                       <td style={tdStyle}>
                         <select
                           value={v.upload_bot_id}
-                          onChange={(e) => updateVideo(v.id, { upload_bot_id: Number(e.target.value) })}
+                          onChange={(e) => {
+                            const id = Number(e.target.value);
+                            updateVideo(v.id, { upload_bot_id: id, bot_id: id });
+                          }}
                           style={{ ...select_, minWidth: 110 }}
                           disabled={v.uploaded}
                           title={v.uploaded ? "Already uploaded" : "Bot used to upload to storage"}

@@ -76,6 +76,7 @@ services:
     volumes:
       - ./workers:/app/workers
       - ./backend:/app/backend
+      - ./backups:/app/backups
     depends_on:
       db:
         condition: service_healthy

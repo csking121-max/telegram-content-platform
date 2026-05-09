@@ -131,11 +131,19 @@ class AccessControlEngine:
         ok = await self._has_sufficient_membership(user.id, access)
         if ok:
             return AccessResponse(allowed=True, pack_id=pack.id)
+        if self._pack_has_credit_fallback(pack):
+            return await self._charge_credits(user, pack)
         return AccessResponse(
             allowed=False,
             reason=f"Requires {access} membership.",
             upgrade_options=[access],
         )
+
+    def _pack_has_credit_fallback(self, pack: ContentPack) -> bool:
+        mode = getattr(pack, "credit_mode", "per_item") or "per_item"
+        if mode == "per_pack":
+            return (pack.credit_cost or 0) > 0
+        return (getattr(pack, "credit_per_item", 0) or 0) > 0
 
     async def _charge_credits(self, user: User, pack: ContentPack) -> AccessResponse:
         """Deduct credits for a pack. Returns AccessResponse."""

@@ -653,7 +653,9 @@ export const publishContent = (body: {
     credit_mode: string;
     credit_per_item: number;
     bot_id: number;
+    duration?: number | null;
     thumbnail_file_id?: string | null;
+    thumbnail_file_ids?: string[];
   }>;
   group_settings?: {
     title: string;
@@ -662,7 +664,9 @@ export const publishContent = (body: {
     credit_mode: string;
     credit_per_item: number;
     bot_id: number;
+    duration?: number | null;
     thumbnail_file_id?: string | null;
+    thumbnail_file_ids?: string[];
   } | null;
   rate_per_minute: number;
   deletion_seconds?: number | null;
