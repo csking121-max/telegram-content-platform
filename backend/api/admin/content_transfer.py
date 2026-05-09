@@ -119,7 +119,7 @@ async def _latest_or_new_token(db: AsyncSession, pack_id: int) -> Token:
     return await token_svc.create(pack_id=pack_id)
 
 
-async def _validate_destination_channel(bot_token: str, channel_id: str) -> None:
+async def _validate_destination_channel(bot_token: str, channel_id: str) -> str:
     result = await _tg_request(bot_token, "getChat", {"chat_id": _telegram_chat_id(channel_id)})
     if not result or not result.get("ok"):
         raise HTTPException(
@@ -129,6 +129,8 @@ async def _validate_destination_channel(bot_token: str, channel_id: str) -> None
                 "Check the channel ID and make the bot an admin/member of that channel."
             ),
         )
+    resolved_id = result.get("result", {}).get("id")
+    return str(resolved_id or channel_id)
 
 
 async def _select_packs(db: AsyncSession, body: TransferStartRequest) -> list[ContentPack]:
@@ -276,7 +278,7 @@ async def start_transfer(body: TransferStartRequest, db: AsyncSession = Depends(
     bot = await BotService(db).get_by_id(body.bot_id)
     if not bot:
         raise HTTPException(404, "Bot not found")
-    await _validate_destination_channel(bot.bot_token, body.channel_id)
+    body.channel_id = await _validate_destination_channel(bot.bot_token, body.channel_id)
 
     packs = await _select_packs(db, body)
     if not packs:

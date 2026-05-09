@@ -111,6 +111,14 @@ async def _tg_upload_file(
             resp = await client.post(url, data=data, files=files)
             if resp.status_code == 200:
                 return resp.json()
+            retry_chat_id = _migrated_chat_id(resp)
+            if retry_chat_id is not None and "chat_id" in data:
+                retry_data = {**data, "chat_id": str(retry_chat_id)}
+                retry = await client.post(url, data=retry_data, files=files)
+                if retry.status_code == 200:
+                    logger.info("TG %s retried with migrated chat_id=%s", method, retry_chat_id)
+                    return retry.json()
+                logger.warning("TG %s migrated retry -> %s: %s", method, retry.status_code, retry.text[:400])
             body = resp.text[:400]
             if resp.status_code == 400 and any(e in body for e in _EXPECTED_400):
                 logger.debug("TG %s expected 400 (will fallback): %s", method, body)
@@ -130,6 +138,14 @@ async def _tg_request(token: str, method: str, payload: dict) -> dict | None:
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 return resp.json()
+            retry_chat_id = _migrated_chat_id(resp)
+            if retry_chat_id is not None and "chat_id" in payload:
+                retry_payload = {**payload, "chat_id": retry_chat_id}
+                retry = await client.post(url, json=retry_payload)
+                if retry.status_code == 200:
+                    logger.info("TG %s retried with migrated chat_id=%s", method, retry_chat_id)
+                    return retry.json()
+                logger.warning("TG %s migrated retry -> %s: %s", method, retry.status_code, retry.text[:400])
             body = resp.text[:400]
             if resp.status_code == 400 and any(e in body for e in _EXPECTED_400):
                 logger.debug("TG %s expected 400 (will fallback): %s", method, body)
@@ -1240,6 +1256,15 @@ async def _download_thumbnail_bytes(db: AsyncSession, thumbnail_file_id: str) ->
         if img_bytes:
             return img_bytes
     return None
+
+
+def _migrated_chat_id(resp: httpx.Response) -> int | None:
+    if resp.status_code != 400:
+        return None
+    try:
+        return resp.json().get("parameters", {}).get("migrate_to_chat_id")
+    except Exception:
+        return None
 
 
 def _build_thumbnail_collage(images: list[bytes]) -> bytes | None:
